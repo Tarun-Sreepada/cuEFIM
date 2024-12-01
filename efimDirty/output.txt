@@ -1,0 +1,6 @@
+ f d b e g (20)
+ g d c b c b d e c e d e b g d g e (24)
+ g e b d c e d c e b c e b d g d c (31)
+ g e b e b d c (60)
+ g e b d (29)
+ g e b d c (30)

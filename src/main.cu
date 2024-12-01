@@ -1,6 +1,7 @@
 #include "config.cuh"
 #include "parse.cuh"
 #include "mine.cuh"
+#include "database.cuh"
 
 void print_help(int argc, char *argv[])
 {
@@ -24,7 +25,7 @@ params parse_arguments(int argc, char *argv[]) {
         {"output", required_argument, 0, 'o'},
         {"separator", required_argument, 0, 's'},
         {"min_utility", required_argument, 0, 'm'},
-        {"method", required_argument, 0, 'M'},
+        {"method", no_argument, 0, 'M'},
         {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
@@ -119,50 +120,28 @@ int main(int argc, char *argv[]) {
     // print it
     std::cout << "input_file: " << p.input_file
                 << "\toutput_file: " << p.output_file
-                << "\tseparator: '" << p.separator 
-                << "\tmin_utility: " << p.min_utility << std::endl;
+                << "\tseparator: " << p.separator 
+                << "\tmin_utility: " << p.min_utility
+                << "\tmethod: " << p.method << std::endl;
 
 
     results r;
 
     r.start_time = std::chrono::high_resolution_clock::now();
 
-    auto [strToInt, intToStr, filtered_transactions, sorted_twu, subtree_util, secondary_util] = parse_file(p);
+    std::vector<pattern> frequent_patterns;
+    auto [filtered_transactions, primary, secondary, intToStr] = parse_file(p, frequent_patterns);
+    std::cout << "Time to parse file: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - r.start_time).count() << "ms" << std::endl;
 
-    // for item in subtree util if less than min_utility then remove it
-    for (auto it = subtree_util.begin(); it != subtree_util.end(); ) {
-        if (it->second < p.min_utility) {
-            it = subtree_util.erase(it);
-        } else {
-            ++it;
-        }
-    }
+    mine_patterns(p, filtered_transactions, primary, secondary, frequent_patterns);
 
-    // for item in secondary util if less than min_utility then remove it
-    for (auto it = secondary_util.begin(); it != secondary_util.end(); ) {
-        if (it->second < p.min_utility) {
-            it = secondary_util.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    std::cout << "Subtree util: " << subtree_util.size() << std::endl;
-    std::cout << "Secondary util: " << secondary_util.size() << std::endl;
-
-    // r.frequentItemsets = generate_frequent_itemsets(filtered_transactions, subtree_util, secondary_util, p.min_utility);
-    if (p.method == "CPU") {
-        r.frequentItemsets = generate_frequent_itemsets_cpu(filtered_transactions, subtree_util, secondary_util, p.min_utility);
-    } else {
-        r.frequentItemsets = generate_frequent_itemsets_gpu(filtered_transactions, subtree_util, secondary_util, p.min_utility);
-    }
 
     r.end_time = std::chrono::high_resolution_clock::now();
+    std::cout << "Frequent Patterns: " << frequent_patterns.size() << std::endl;
 
     double duration = std::chrono::duration_cast<std::chrono::milliseconds>(r.end_time - r.start_time).count();
     duration /= 1000;
     std::cout << "Execution time: " << duration << "s" << std::endl;
-    std::cout << "Frequent itemsets: " << r.frequentItemsets.size() << std::endl;
 
 
     return 0;

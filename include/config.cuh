@@ -19,42 +19,57 @@
 #include <unordered_set>
 #include <chrono>
 #include <stdexcept>
-#include <functional> 
+#include <functional>
 #include <numeric>
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <unordered_map>
+#include <map>
+#include <cstdint>
+#include <stdexcept>
+#include <algorithm>
+#include <numeric>
+#include <tuple>
+#include <thrust/device_vector.h>
+#include <thrust/host_vector.h>
+#include <thrust/sort.h>
+
+#include "database.cuh"
+
 
 struct params
 {
-    // inputfile, output file, minUtil, seperator
     std::string input_file;
     std::string output_file;
     std::string separator;
 
     char seperatorChar;
 
-    uint64_t min_utility = 0;
+    uint32_t min_utility = 0;
 
-
-    std::string method;
-
+    std::string method = "GPU";
 };
 
 struct results
 {
-    std::vector<
-        std::pair<
-            std::vector<std::string>, uint64_t>
-                > frequentItemsets;
-
     std::chrono::time_point<std::chrono::high_resolution_clock> start_time;
     std::chrono::time_point<std::chrono::high_resolution_clock> end_time;
+
+    uint32_t total_patterns;
 };
 
 // Hash function for vectors
-struct VectorHash {
-    size_t operator()(const std::vector<uint32_t> &v) const {
+struct VectorHash
+{
+    uint32_t operator()(const std::vector<uint32_t> &v) const
+    {
         std::hash<uint32_t> hasher;
-        size_t seed = 0;
-        for (uint32_t i : v) {
+        uint32_t seed = 0;
+        for (uint32_t i : v)
+        {
             seed ^= hasher(i) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
         }
         return seed;

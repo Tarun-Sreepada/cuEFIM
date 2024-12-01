@@ -500,7 +500,7 @@ if __name__ == "__main__":
     # inputFile = 'datasets/chainstore.txt'
     # minUtil = 1000000
 
-    inputFile = 'datasets/test.txt'
+    inputFile = '/home/tarun/cudaEFIM/datasets/test.txt'
     minUtil = 40
 
     # inputFile = "EFIM/BMS_utility_spmf.txt"
