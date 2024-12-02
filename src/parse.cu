@@ -184,6 +184,9 @@ void collect_primary_secondary(
         if (entry.second >= min_utility) {
             secondary.push_back(entry.first);
         }
+        else {
+            secondary.push_back(0);
+        }
     }
 }
 

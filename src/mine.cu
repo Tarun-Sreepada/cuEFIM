@@ -58,11 +58,9 @@ __global__ void searchGPU(database *d_db, uint32_t *transaction_hits, uint32_t t
 
         atomicAdd(&candidate_utility[i], curr_cand_util);
 
-        uint32_t all_utilities = curr_cand_util;
         // location -= transaction_start; // 
         uint32_t ref = secondary_reference[i];
         uint32_t secondary_index_start = secondary_size * ref;
-
 
         // collect all utilities
         for (uint32_t j = location + 1; j < transaction_end; j++)
@@ -70,25 +68,24 @@ __global__ void searchGPU(database *d_db, uint32_t *transaction_hits, uint32_t t
             uint32_t item = d_db->item_utility[j].key;
             if (secondary[secondary_index_start + item]) // if the item is valid secondary
             {
-                all_utilities += d_db->item_utility[j].value;
+                curr_cand_util += d_db->item_utility[j].value;
             }
         }
 
         uint32_t temp = 0;
+
+        uint32_t subtree_local_insert_location = i * secondary_size;
 
         for (uint32_t j = location + 1; j < transaction_end; j++)
         {
             uint32_t item = d_db->item_utility[j].key;
             if (secondary[secondary_index_start + item]) // if the item is valid secondary
             {
-                // all_utilities += d_db->item_utility[j].value;
-                atomicAdd(&candidate_local_utility[secondary_index_start + item], all_utilities);
-                atomicAdd(&candidate_subtree_utility[secondary_index_start + item], all_utilities - temp);
+                atomicAdd(&candidate_local_utility[subtree_local_insert_location + item], curr_cand_util);
+                atomicAdd(&candidate_subtree_utility[subtree_local_insert_location + item], curr_cand_util - temp);
                 temp += d_db->item_utility[j].value;
-                printf("Item: %u Utility: %u -temp: %u\n", item, all_utilities, all_utilities - temp);
             }
         }
-
 
     }
 
@@ -108,7 +105,7 @@ __global__ void clean_subtree_local_utility(uint32_t number_of_candidates, uint3
 
     for (uint32_t i = tid * secondary_size; i < (tid + 1) * secondary_size; i++)
     {
-        uint32_t item_value = i - tid * secondary_size + 1;
+        uint32_t item_value = i - tid * secondary_size;
 
         if (subtree_utility[i] >= minimum_utility)
         {
@@ -286,11 +283,11 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
     thrust::device_vector<uint32_t> d_secondary_reference(primary.size(), 0);
     thrust::device_vector<uint32_t> d_secondary = secondary;
 
-    uint32_t secondary_size = d_secondary.size();
+    // uint32_t secondary_size = max element in secondary
+    uint32_t secondary_size = secondary.size();
     thrust::device_vector<uint32_t> transaction_hits(transactions_count, 1);
 
     std::vector<std::pair<thrust::host_vector<uint32_t>, thrust::host_vector<uint32_t>>> original_patterns;
-
 
     while (number_of_candidates)
     {
@@ -320,36 +317,11 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
 
         original_patterns.push_back({h_candidates, h_candidate_utility});
 
-        // clean subtree local utility
-
-
-        thrust::host_vector<uint32_t> h_candidate_subtree_utility = d_candidate_subtree_utility;
-        thrust::host_vector<uint32_t> h_candidate_local_utility = d_candidate_local_utility;
-        // print candidate, local, subtree utility
-        for (uint32_t i = 0; i < number_of_candidates; i++)
-        {
-            for (uint32_t j = 0; j < candidate_size; j++)
-            {
-                std::cout << h_candidates[i * candidate_size + j] << " ";
-            }
-            std::cout << "Utility: " << h_candidate_utility[i] << std::endl;
-            for (uint32_t j = 0; j < secondary_size; j++)
-            {
-                std::cout << "Item: " << j + 1 << " Subtree: " << h_candidate_subtree_utility[i * secondary_size + j] << " Local: " << h_candidate_local_utility[i * secondary_size + j] << std::endl;
-            }
-            std::cout << std::endl;
-        }
-
         candidate_size += 1;
         thrust::device_vector<uint32_t> d_number_of_new_candidates_per_candidate(number_of_candidates + 1, 0);
 
         block = dim3(block_size, 1, 1);
         grid = dim3(number_of_candidates / block_size + 1, 1, 1);
-
-        // uint32_t check_function // calculate the nubmer of values greater than equal to min_utility in subtree utility
-        uint32_t check = thrust::count_if(d_candidate_subtree_utility.begin(), d_candidate_subtree_utility.end(), thrust::placeholders::_1 >= p.min_utility);
-        std::cout << "Number of candidates with utility greater than min_utility: " << check << std::endl;
-
 
         clean_subtree_local_utility<<<grid,block>>>(number_of_candidates, thrust::raw_pointer_cast(d_number_of_new_candidates_per_candidate.data()), 
                                             thrust::raw_pointer_cast(d_candidate_subtree_utility.data()), thrust::raw_pointer_cast(d_candidate_local_utility.data()), 
@@ -401,10 +373,10 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
             }
             for (uint32_t k = 0; k < i + 1; k++)
             {
-                std::cout << h_candidates[j * size + k] << " ";
-                std::cout << intToStr[h_candidates[j * size + k]] << " ";
+                // std::cout << h_candidates[j * size + k] << " ";
+                // std::cout << intToStr[h_candidates[j * size + k]] << " ";
             }
-            std::cout << "#UTIL: " << h_candidate_utility[j] << std::endl;
+            // std::cout << "#UTIL: " << h_candidate_utility[j] << std::endl;
             pattern_counter++;
         }
     }
