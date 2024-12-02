@@ -160,6 +160,18 @@ __global__ void create_new_candidates(uint32_t *candidates, uint32_t *candidate_
 }
 
 
+void print_used_gpu_memory() {
+    size_t free_mem, total_mem;
+    cudaError_t err = cudaMemGetInfo(&free_mem, &total_mem);
+
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA Error: " << cudaGetErrorString(err) << std::endl;
+        return;
+    }
+
+    std::cout << "Used GPU memory: " << (total_mem - free_mem) / 1024.0 / 1024.0 << " MB" << std::endl;
+}
+
 
 // Define necessary structures and functions (assuming they are defined elsewhere)
 // For example: params, pattern, key_value, database, gpuErrchk, hash_transactions,
@@ -391,6 +403,8 @@ void mine_gpu_patterns(const params &p,
         gpuErrchk(cudaDeviceSynchronize());
         gpuErrchk(cudaPeekAtLastError());
 
+        print_used_gpu_memory();
+
         d_candidates.swap(d_new_candidates);
         d_secondary.swap(d_candidate_local_utility);
         d_secondary_reference.swap(d_new_secondary_reference);
@@ -502,6 +516,7 @@ void mine_patterns(params p,
               << std::chrono::duration_cast<std::chrono::milliseconds>(
                      std::chrono::high_resolution_clock::now() - start).count()
               << "ms" << std::endl;
+
 
     // Clean up GPU memory
     free_gpu_memory(d_db);
