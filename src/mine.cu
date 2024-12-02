@@ -3,8 +3,6 @@
 #include "database.cuh"
 #include <thrust/count.h>
 
-
-extern __shared__ key_value shared_memory[];
 __global__ void searchGPU(database *d_db, uint32_t *transaction_hits, uint32_t transactions_count,
                           uint32_t *candidates, uint32_t number_of_candidates, uint32_t candidate_size,
                           uint32_t *secondary, uint32_t secondary_size,
@@ -12,6 +10,179 @@ __global__ void searchGPU(database *d_db, uint32_t *transaction_hits, uint32_t t
                           uint32_t *candidate_utility,
                           uint32_t *candidate_subtree_utility,
                           uint32_t *candidate_local_utility)
+{
+    uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= transactions_count || transaction_hits[tid] == 0)
+    {
+        return;
+    }
+
+    transaction_hits[tid] = 0;
+
+    uint32_t transaction_start = d_db->transaction_start[tid];
+    uint32_t transaction_end = d_db->transaction_end[tid];
+    uint32_t item_index_insert_start = transaction_start * bucket_factor;
+    uint32_t item_index_insert_end = transaction_end * bucket_factor;
+    int32_t location = -1;
+
+    // iterate through all candidates
+    for (uint32_t i = 0; i < number_of_candidates; i++)
+    {
+        uint32_t curr_cand_util = 0;
+        uint32_t curr_cand_hits = 0;
+        location = -1;
+
+        for (uint32_t j = 0; j < candidate_size; j++)
+        {
+            uint32_t candidate = candidates[i * candidate_size + j];
+            location = query_item(d_db->item_index, item_index_insert_start, item_index_insert_end, candidate);
+            if (location != -1)
+            {
+                curr_cand_hits++;
+                curr_cand_util += d_db->item_utility[location].value;
+            }
+            else
+                break;
+        }
+
+        if (curr_cand_hits != candidate_size)
+            continue;
+
+        transaction_hits[tid] = 1;
+        atomicAdd(&candidate_utility[i], curr_cand_util);
+
+        // calculate the TWU
+        uint32_t ref = secondary_reference[i];
+        uint32_t secondary_index_start = secondary_size * ref;
+
+        // collect all utilities
+        for (uint32_t j = location + 1; j < transaction_end; j++)
+        {
+            uint32_t item = d_db->item_utility[j].key;
+            if (secondary[secondary_index_start + item]) // if the item is valid secondary
+            {
+                curr_cand_util += d_db->item_utility[j].value;
+            }
+        }
+
+        uint32_t temp = 0;
+        uint32_t subtree_local_insert_location = i * secondary_size;
+
+        for (uint32_t j = location + 1; j < transaction_end; j++)
+        {
+            uint32_t item = d_db->item_utility[j].key;
+            if (secondary[secondary_index_start + item]) // if the item is valid secondary
+            {
+                atomicAdd(&candidate_local_utility[subtree_local_insert_location + item], curr_cand_util);
+                atomicAdd(&candidate_subtree_utility[subtree_local_insert_location + item], curr_cand_util - temp);
+                temp += d_db->item_utility[j].value;
+            }
+        }
+    }
+}
+
+__global__ void clean_subtree_local_utility(uint32_t number_of_candidates, uint32_t *number_of_new_candidates_per_candidate,
+                                            uint32_t *subtree_utility, uint32_t *local_utility, uint32_t secondary_size, uint32_t minimum_utility)
+{
+    uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid >= number_of_candidates) return;
+
+    for (uint32_t i = tid * secondary_size; i < (tid + 1) * secondary_size; i++)
+    {
+        uint32_t item_value = i - tid * secondary_size;
+
+        if (subtree_utility[i] >= minimum_utility)
+        {
+            subtree_utility[i] = item_value;
+            number_of_new_candidates_per_candidate[tid + 1]++;
+        }
+        else
+        {
+            subtree_utility[i] = 0;
+        }
+        if (local_utility[i] >= minimum_utility)
+        {
+            local_utility[i] = item_value;
+        }
+        else
+        {
+            local_utility[i] = 0;
+        }
+    }
+    return;
+}
+
+// __global__ void filter_subtree_local_utility(uint32_t numCands, uint32_t *numNewCand,
+//                                                  uint32_t *candSubtreeUtil, uint32_t *candLocalUtil, uint32_t numSecondaries, uint32_t minUtil)
+// {
+//     uint32_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+//     if (tid >= numCands)
+//         return;
+
+//     for (uint32_t i = tid * numSecondaries; i < (tid + 1) * numSecondaries; i++)
+//     {
+//         if (candSubtreeUtil[i] >= minUtil)
+//         {
+//             candSubtreeUtil[i] = i - tid * numSecondaries;
+//             numNewCand[tid + 1]++;
+//         }
+//         else
+//         {
+//             candSubtreeUtil[i] = 0;
+//         }
+//         if (candLocalUtil[i] >= minUtil)
+//         {
+//             candLocalUtil[i] = i - tid * numSecondaries;
+//         }
+//         else
+//         {
+//             candLocalUtil[i] = 0;
+//         }
+//     }
+//     return;
+// }
+
+
+__global__ void write_new_candidates(uint32_t *cands, uint32_t *candSubtreeUtil, uint32_t numCands, uint32_t *newCands,
+                               uint32_t *newSecondaryRefs, uint32_t numSecondaries, uint32_t size, uint32_t *locs)
+{
+    uint32_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+    if (tid >= numCands)
+        return;
+
+    if (locs[tid] == locs[tid + 1])
+        return;
+
+    uint32_t counter = size * locs[tid];
+    uint32_t refStart = locs[tid];
+    for (uint32_t i = tid * numSecondaries; i < (tid + 1) * numSecondaries; i++)
+    {
+        if (candSubtreeUtil[i])
+        {
+            for (uint32_t j = tid * (size - 1); j < (tid + 1) * (size - 1); j++)
+            {
+                newCands[counter] = cands[j];
+                counter++;
+            }
+            newCands[counter] = candSubtreeUtil[i];
+            counter++;
+            newSecondaryRefs[refStart] = tid;
+            refStart++;
+        }
+    }
+}
+
+
+
+
+extern __shared__ key_value shared_memory[];
+__global__ void searchGPU_shared_mem_k_v(database *d_db, uint32_t *transaction_hits, uint32_t transactions_count,
+                                         uint32_t *candidates, uint32_t number_of_candidates, uint32_t candidate_size,
+                                         uint32_t *secondary, uint32_t secondary_size,
+                                         uint32_t *secondary_reference,
+                                         uint32_t *candidate_utility,
+                                         uint32_t *candidate_subtree_utility,
+                                         uint32_t *candidate_local_utility)
 {
     uint32_t block_id = blockIdx.x + blockIdx.y * gridDim.x;
     uint32_t tid = threadIdx.x;
@@ -30,7 +201,7 @@ __global__ void searchGPU(database *d_db, uint32_t *transaction_hits, uint32_t t
         // shared_memory[i] = d_db->item_index[transaction_start * bucket_factor + i];
         shared_memory[i].key = d_db->item_index[transaction_start * bucket_factor + i].key;
         shared_memory[i].value = d_db->item_index[transaction_start * bucket_factor + i].value;
-    }   
+    }
 
     __syncthreads();
 
@@ -86,46 +257,10 @@ __global__ void searchGPU(database *d_db, uint32_t *transaction_hits, uint32_t t
                 temp += d_db->item_utility[j].value;
             }
         }
-
     }
-
 }
 
 
-__global__ void clean_subtree_local_utility(uint32_t number_of_candidates, uint32_t *number_of_new_candidates_per_candidate, 
-                                            uint32_t *subtree_utility, uint32_t *local_utility, uint32_t secondary_size, uint32_t minimum_utility)
-{
-    uint32_t tid = threadIdx.x;
-    if (tid >= number_of_candidates)
-    {
-        return;
-    }
-
-
-    for (uint32_t i = tid * secondary_size; i < (tid + 1) * secondary_size; i++)
-    {
-        uint32_t item_value = i - tid * secondary_size;
-
-        if (subtree_utility[i] >= minimum_utility)
-        {
-            subtree_utility[i] = item_value;
-            number_of_new_candidates_per_candidate[tid + 1]++;
-        }
-        else
-        {
-            subtree_utility[i] = 0;
-        }
-        if (local_utility[i] >= minimum_utility)
-        {
-            local_utility[i] = item_value;
-        }
-        else
-        {
-            local_utility[i] = 0;
-        }
-    }
-    return;
-}
 
 __global__ void create_new_candidates(uint32_t *candidates, uint32_t *candidate_subtree_utility, uint32_t number_of_candidates,
                                       uint32_t *new_candidates, uint32_t *new_secondary_reference, uint32_t secondary_size, uint32_t candidate_size,
@@ -211,9 +346,9 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
     cudaGetDeviceProperties(&props, device);
     std::cout << "Max shared memory per block: " << props.sharedMemPerBlock << std::endl;
 
-    if (shared_memory_requirement > props.sharedMemPerBlock)  
+    if (shared_memory_requirement > props.sharedMemPerBlock)
         std::cerr << "Shared memory requirement exceeds the maximum shared memory per block" << std::endl;
-    
+
     std::cout << "Time to convert transactions: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
     start = std::chrono::high_resolution_clock::now();
 
@@ -249,10 +384,6 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
     std::cout << "Time to copy transactions to GPU: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
     start = std::chrono::high_resolution_clock::now();
 
-    // print_db<<<1, 1>>>(d_db);
-    // gpuErrchk(cudaDeviceSynchronize());
-    // gpuErrchk(cudaPeekAtLastError());
-
     // Call the kernel
     dim3 block(block_size);
     dim3 grid((transactions_count + block.x) / block.x);
@@ -266,10 +397,6 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
 
     uint32_t number_of_candidates = primary.size();
     uint32_t candidate_size = 1;
-
-    // print_db_full<<<1, 1>>>(d_db);
-    // gpuErrchk(cudaDeviceSynchronize());
-    // gpuErrchk(cudaPeekAtLastError());
 
     thrust::device_vector<uint32_t> d_candidates = primary;
     thrust::device_vector<uint32_t> d_secondary_reference(primary.size(), 0);
@@ -289,92 +416,55 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
         thrust::device_vector<uint32_t> d_candidate_subtree_utility(number_of_candidates * secondary_size, 0);
         thrust::device_vector<uint32_t> d_candidate_local_utility(number_of_candidates * secondary_size, 0);
 
-        // block size is 32 but grid is number of transactions
-        block = dim3(block_size);
+        // grid is number of transactions
         grid = dim3(transactions_count);
 
-        searchGPU<<<grid, block, shared_memory_requirement>>>(d_db, thrust::raw_pointer_cast(transaction_hits.data()), transactions_count,
-                                    thrust::raw_pointer_cast(d_candidates.data()), number_of_candidates, candidate_size,
-                                    thrust::raw_pointer_cast(d_secondary.data()), secondary_size,
-                                    thrust::raw_pointer_cast(d_secondary_reference.data()),
-                                    thrust::raw_pointer_cast(d_candidate_utility.data()),
-                                    thrust::raw_pointer_cast(d_candidate_subtree_utility.data()),
-                                    thrust::raw_pointer_cast(d_candidate_local_utility.data()));
+        searchGPU_shared_mem_k_v<<<grid, block, shared_memory_requirement>>>(d_db, thrust::raw_pointer_cast(transaction_hits.data()), transactions_count,
+                                                              thrust::raw_pointer_cast(d_candidates.data()), number_of_candidates, candidate_size,
+                                                              thrust::raw_pointer_cast(d_secondary.data()), secondary_size,
+                                                              thrust::raw_pointer_cast(d_secondary_reference.data()),
+                                                              thrust::raw_pointer_cast(d_candidate_utility.data()),
+                                                              thrust::raw_pointer_cast(d_candidate_subtree_utility.data()),
+                                                              thrust::raw_pointer_cast(d_candidate_local_utility.data()));
 
         gpuErrchk(cudaDeviceSynchronize());
         gpuErrchk(cudaPeekAtLastError());
 
         thrust::host_vector<uint32_t> h_candidates = d_candidates;
         thrust::host_vector<uint32_t> h_candidate_utility = d_candidate_utility;
-        thrust::host_vector<uint32_t> h_candidate_subtree_utility = d_candidate_subtree_utility;
-        thrust::host_vector<uint32_t> h_candidate_local_utility = d_candidate_local_utility;
-
-        // // print candidate and subtree utility with local utility
-        // for (uint32_t i = 0; i < number_of_candidates; i++)
-        // {
-        //     if (h_candidate_utility[i] < p.min_utility)
-        //     {
-        //         continue;
-        //     }
-        //     for (uint32_t j = 0; j < candidate_size; j++)
-        //     {
-        //         std::cout << h_candidates[i * candidate_size + j] << " ";
-        //         // std::cout << intToStr[h_candidates[i * candidate_size + j]] << " ";
-        //     }
-        //     std::cout << "#UTIL: " << h_candidate_utility[i] << std::endl;
-        //     for (uint32_t j = 0; j < secondary_size; j++)
-        //     {
-        //         if (h_candidate_subtree_utility[i * secondary_size + j] == 0 || h_candidate_local_utility[i * secondary_size + j] == 0)
-        //         {
-        //             continue;
-        //         }
-        //         std::cout << j << ":" << h_candidate_subtree_utility[i * secondary_size + j] << ":" << h_candidate_local_utility[i * secondary_size + j] << " ";
-        //     }
-        //     std::cout << std::endl;
-        // }
-
         original_patterns.push_back({h_candidates, h_candidate_utility});
 
         candidate_size += 1;
+
         thrust::device_vector<uint32_t> d_number_of_new_candidates_per_candidate(number_of_candidates + 1, 0);
 
-        block = dim3(block_size, 1, 1);
         grid = dim3(number_of_candidates / block_size + 1, 1, 1);
+        clean_subtree_local_utility<<<grid, block>>>(number_of_candidates, thrust::raw_pointer_cast(d_number_of_new_candidates_per_candidate.data()),
+                                                      thrust::raw_pointer_cast(d_candidate_subtree_utility.data()), thrust::raw_pointer_cast(d_candidate_local_utility.data()),
+                                                      secondary_size, p.min_utility);
 
-        clean_subtree_local_utility<<<grid,block>>>(number_of_candidates, thrust::raw_pointer_cast(d_number_of_new_candidates_per_candidate.data()), 
-                                            thrust::raw_pointer_cast(d_candidate_subtree_utility.data()), thrust::raw_pointer_cast(d_candidate_local_utility.data()), 
-                                            secondary_size, p.min_utility);
+        uint32_t number_of_new_candidates = thrust::reduce(d_number_of_new_candidates_per_candidate.begin(), d_number_of_new_candidates_per_candidate.end());
+        thrust::inclusive_scan(d_number_of_new_candidates_per_candidate.begin(), d_number_of_new_candidates_per_candidate.end(), d_number_of_new_candidates_per_candidate.begin());
+        if (number_of_new_candidates == 0) break;
+        thrust::device_vector<uint32_t> d_new_candidates(number_of_new_candidates * candidate_size, 0);
+        thrust::device_vector<uint32_t> d_new_secondary_reference(number_of_new_candidates, 0);
+
+        grid = dim3(number_of_candidates / block_size + 1, 1, 1);
+        write_new_candidates<<<grid,block>>>(thrust::raw_pointer_cast(d_candidates.data()), thrust::raw_pointer_cast(d_candidate_subtree_utility.data()),
+                                            number_of_candidates,thrust::raw_pointer_cast(d_new_candidates.data()),
+                                            thrust::raw_pointer_cast(d_new_secondary_reference.data()), secondary_size, candidate_size,
+                                            thrust::raw_pointer_cast(d_number_of_new_candidates_per_candidate.data()));
 
         gpuErrchk(cudaDeviceSynchronize());
         gpuErrchk(cudaPeekAtLastError());
 
-        uint32_t number_of_new_candidates = thrust::reduce(d_number_of_new_candidates_per_candidate.begin(), d_number_of_new_candidates_per_candidate.end());
-        thrust::inclusive_scan(d_number_of_new_candidates_per_candidate.begin(), d_number_of_new_candidates_per_candidate.end(), d_number_of_new_candidates_per_candidate.begin());
-
-        if (number_of_new_candidates == 0)
-        {
-            break;
-        }
-
-        thrust::device_vector<uint32_t> d_new_candidates(number_of_new_candidates * candidate_size, 0);
-        thrust::device_vector<uint32_t> d_new_secondary_reference(number_of_new_candidates, 0);
-
-        create_new_candidates<<<grid, block>>>(thrust::raw_pointer_cast(d_candidates.data()), thrust::raw_pointer_cast(d_candidate_subtree_utility.data()), 
-                                        number_of_candidates,thrust::raw_pointer_cast(d_new_candidates.data()), 
-                                        thrust::raw_pointer_cast(d_new_secondary_reference.data()), secondary_size, candidate_size, 
-                                        thrust::raw_pointer_cast(d_number_of_new_candidates_per_candidate.data()));
-
-
-        number_of_candidates = number_of_new_candidates;
         d_candidates = d_new_candidates;
-        d_secondary_reference = d_new_secondary_reference;
         d_secondary = d_candidate_local_utility;
+        d_secondary_reference = d_new_secondary_reference;
+        number_of_candidates = number_of_new_candidates;
 
     }
 
-    uint32_t pattern_counter = 0;
-
-    std::cout << "Largest Pattern: " << original_patterns.size() << std::endl;  
     for (uint32_t i = 0; i < original_patterns.size(); i++)
     {
         thrust::host_vector<uint32_t> h_candidates = original_patterns[i].first;
@@ -382,22 +472,22 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
 
         uint32_t size = i + 1;
 
-
         for (uint32_t j = 0; j < h_candidate_utility.size(); j++)
         {
             if (h_candidate_utility[j] < p.min_utility)
             {
                 continue;
             }
+            pattern p;
             for (uint32_t k = 0; k < i + 1; k++)
             {
-                // std::cout << h_candidates[j * size + k] << " ";
-                std::cout << intToStr[h_candidates[j * size + k]] << " ";
+                // std::cout << intToStr[h_candidates[j * size + k]] << " ";
+                p.items_names.push_back(intToStr[h_candidates[j * size + k]]);
             }
-            std::cout << "#UTIL: " << h_candidate_utility[j] << std::endl;
-            pattern_counter++;
+            // std::cout << "#UTIL: " << h_candidate_utility[j] << std::endl;
+            p.utility = h_candidate_utility[j];
+            frequent_patterns.push_back(p);
         }
     }
-    std::cout << "Number of patterns: " << pattern_counter << std::endl;
-
+    std::cout << "Frequent Patterns: " << frequent_patterns.size() << std::endl;
 }

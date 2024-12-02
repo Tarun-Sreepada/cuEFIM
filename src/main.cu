@@ -137,7 +137,23 @@ int main(int argc, char *argv[]) {
 
 
     r.end_time = std::chrono::high_resolution_clock::now();
-    // std::cout << "Frequent Patterns: " << frequent_patterns.size() << std::endl;
+    std::cout << "Frequent Patterns: " << frequent_patterns.size() << std::endl;
+
+    // open output file and write
+    std::ofstream output_file(p.output_file);
+    if (!output_file.is_open()) {
+        std::cerr << "Error opening output file" << std::endl;
+        return 1;
+    }
+
+    for (const auto &pattern : frequent_patterns) {
+        for (const auto &item : pattern.items_names) {
+            output_file << item << " ";
+        }
+        output_file << "#UTIL: " << pattern.utility << std::endl;
+    }
+
+    output_file.close();
 
     double duration = std::chrono::duration_cast<std::chrono::milliseconds>(r.end_time - r.start_time).count();
     duration /= 1000;
