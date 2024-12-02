@@ -43,13 +43,3 @@ set_target_properties(efim PROPERTIES
 
 # Link CUDA runtime (handled automatically by CMake)
 target_link_libraries(efim PRIVATE cuda)
-
-# Provide a custom target for cuda-memcheck
-add_custom_target(cuda-memcheck
-    COMMAND cuda-memcheck ./efim
-    DEPENDS efim
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-)
-
-# ./efim -f /home/tarun/cudaEFIM/datasets/test.txt -o output.tx -s space -m 30 -M GPU $ test case
-

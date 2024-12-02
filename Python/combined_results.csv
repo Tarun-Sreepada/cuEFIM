@@ -1,0 +1,15 @@
+Algorithm,File,Minimum_Utility,Execution_Time,Frequent_Patterns
+EFIM,chainstore,140000,15880,10943
+EFIM,chainstore,150000,9882,9741
+EFIM,chainstore,160000,9045,8782
+EFIM,chainstore,170000,9174,7931
+EFIM,chainstore,180000,8615,7168
+EFIM,chainstore,190000,7968,6541
+EFIM,chainstore,200000,7551,6037
+DPHIM,chainstore,140000,59642,10943
+DPHIM,chainstore,150000,49919,9741
+DPHIM,chainstore,160000,50511,8782
+DPHIM,chainstore,170000,46899,7931
+DPHIM,chainstore,180000,45965,7168
+DPHIM,chainstore,190000,45744,6541
+DPHIM,chainstore,200000,44260,6037
