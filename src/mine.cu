@@ -54,11 +54,11 @@ __global__ void searchGPU(database *d_db, uint32_t *transaction_hits, uint32_t t
         {
             continue;
         }
-        transaction_hits[block_id] += 1;
 
+        transaction_hits[block_id] = 1;
         atomicAdd(&candidate_utility[i], curr_cand_util);
 
-        // location -= transaction_start; // 
+        // calculate the TWU
         uint32_t ref = secondary_reference[i];
         uint32_t secondary_index_start = secondary_size * ref;
 
@@ -88,7 +88,6 @@ __global__ void searchGPU(database *d_db, uint32_t *transaction_hits, uint32_t t
         }
 
     }
-
 
 }
 
@@ -128,12 +127,6 @@ __global__ void clean_subtree_local_utility(uint32_t number_of_candidates, uint3
     return;
 }
 
-// create_new_candidates<<<1, 1>>>(thrust::raw_pointer_cast(d_candidates.data()), thrust::raw_pointer_cast(d_candidate_subtree_utility.data()), 
-//                                         number_of_candidates,thrust::raw_pointer_cast(d_new_candidates.data()), 
-//                                         thrust::raw_pointer_cast(d_new_secondary_reference.data()), secondary_size, candidate_size, 
-//                                         thrust::raw_pointer_cast(d_number_of_new_candidates_per_candidate.data()));
-
-
 __global__ void create_new_candidates(uint32_t *candidates, uint32_t *candidate_subtree_utility, uint32_t number_of_candidates,
                                       uint32_t *new_candidates, uint32_t *new_secondary_reference, uint32_t secondary_size, uint32_t candidate_size,
                                       uint32_t *number_of_new_candidates_per_candidate)
@@ -144,6 +137,7 @@ __global__ void create_new_candidates(uint32_t *candidates, uint32_t *candidate_
         return;
     }
 
+    // if no new candidates
     if (number_of_new_candidates_per_candidate[tid] == number_of_new_candidates_per_candidate[tid + 1])
     {
         return;
@@ -217,10 +211,8 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
     cudaGetDeviceProperties(&props, device);
     std::cout << "Max shared memory per block: " << props.sharedMemPerBlock << std::endl;
 
-    if (shared_memory_requirement > props.sharedMemPerBlock)
-    {
+    if (shared_memory_requirement > props.sharedMemPerBlock)  
         std::cerr << "Shared memory requirement exceeds the maximum shared memory per block" << std::endl;
-    }
     
     std::cout << "Time to convert transactions: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
     start = std::chrono::high_resolution_clock::now();
@@ -314,6 +306,32 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
 
         thrust::host_vector<uint32_t> h_candidates = d_candidates;
         thrust::host_vector<uint32_t> h_candidate_utility = d_candidate_utility;
+        thrust::host_vector<uint32_t> h_candidate_subtree_utility = d_candidate_subtree_utility;
+        thrust::host_vector<uint32_t> h_candidate_local_utility = d_candidate_local_utility;
+
+        // // print candidate and subtree utility with local utility
+        // for (uint32_t i = 0; i < number_of_candidates; i++)
+        // {
+        //     if (h_candidate_utility[i] < p.min_utility)
+        //     {
+        //         continue;
+        //     }
+        //     for (uint32_t j = 0; j < candidate_size; j++)
+        //     {
+        //         std::cout << h_candidates[i * candidate_size + j] << " ";
+        //         // std::cout << intToStr[h_candidates[i * candidate_size + j]] << " ";
+        //     }
+        //     std::cout << "#UTIL: " << h_candidate_utility[i] << std::endl;
+        //     for (uint32_t j = 0; j < secondary_size; j++)
+        //     {
+        //         if (h_candidate_subtree_utility[i * secondary_size + j] == 0 || h_candidate_local_utility[i * secondary_size + j] == 0)
+        //         {
+        //             continue;
+        //         }
+        //         std::cout << j << ":" << h_candidate_subtree_utility[i * secondary_size + j] << ":" << h_candidate_local_utility[i * secondary_size + j] << " ";
+        //     }
+        //     std::cout << std::endl;
+        // }
 
         original_patterns.push_back({h_candidates, h_candidate_utility});
 
@@ -374,9 +392,9 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
             for (uint32_t k = 0; k < i + 1; k++)
             {
                 // std::cout << h_candidates[j * size + k] << " ";
-                // std::cout << intToStr[h_candidates[j * size + k]] << " ";
+                std::cout << intToStr[h_candidates[j * size + k]] << " ";
             }
-            // std::cout << "#UTIL: " << h_candidate_utility[j] << std::endl;
+            std::cout << "#UTIL: " << h_candidate_utility[j] << std::endl;
             pattern_counter++;
         }
     }

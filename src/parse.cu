@@ -149,8 +149,7 @@ std::vector<key_value> build_transaction(
 // Helper function to update utility maps
 void update_utilities(
     const std::vector<key_value>& transaction,
-    std::unordered_map<uint32_t, uint32_t>& subtree_util,
-    std::unordered_map<uint32_t, uint32_t>& secondary_util)
+    std::unordered_map<uint32_t, uint32_t>& subtree_util)
 {
     uint32_t weight = std::accumulate(transaction.begin(), transaction.end(), uint32_t(0),
                                       [](uint32_t sum, const auto& entry) {
@@ -161,7 +160,6 @@ void update_utilities(
         uint32_t item_id = entry.key;
         uint32_t value = entry.value;
         subtree_util[item_id] += weight - temp;
-        secondary_util[item_id] += weight;
         temp += value;
     }
 }
@@ -170,22 +168,12 @@ void update_utilities(
 // Helper function to collect primary and secondary items
 void collect_primary_secondary(
     const std::unordered_map<uint32_t, uint32_t>& subtree_util,
-    const std::unordered_map<uint32_t, uint32_t>& secondary_util,
     uint32_t min_utility,
-    std::vector<uint32_t>& primary,
-    std::vector<uint32_t>& secondary)
+    std::vector<uint32_t>& primary)
 {
     for (const auto& entry : subtree_util) {
         if (entry.second >= min_utility) {
             primary.push_back(entry.first);
-        }
-    }
-    for (const auto& entry : secondary_util) {
-        if (entry.second >= min_utility) {
-            secondary.push_back(entry.first);
-        }
-        else {
-            secondary.push_back(0);
         }
     }
 }
@@ -202,7 +190,6 @@ std::tuple<
 {
     std::unordered_map<std::vector<uint32_t>, std::vector<uint32_t>, VectorHash> filtered_transactions;
     std::unordered_map<uint32_t, uint32_t> subtree_util;
-    std::unordered_map<uint32_t, uint32_t> secondary_util;
 
     for (const auto& data : fd.data) {
         
@@ -226,7 +213,7 @@ std::tuple<
             }
 
             // Update utilities
-            update_utilities(transaction, subtree_util, secondary_util);
+            update_utilities(transaction, subtree_util);
 
             // update_filtered_transactions(transaction_keys, transaction_values, filtered_transactions);
             auto it = filtered_transactions.find(transaction_keys);
@@ -244,7 +231,7 @@ std::tuple<
     // Collect primary and secondary items
     std::vector<uint32_t> primary;
     std::vector<uint32_t> secondary;
-    collect_primary_secondary(subtree_util, secondary_util, min_utility, primary, secondary);
+    collect_primary_secondary(subtree_util, min_utility, primary);
 
     return std::make_tuple(filtered_transactions, primary, secondary);
 }
@@ -297,6 +284,8 @@ parse_file(const params& p)
 
     // Process transactions
     auto [filtered_transactions, primary, secondary] = process_transactions(file_data, strToInt, p.min_utility);
+    // fill secondary with 1
+    secondary.resize(intToStr.size() + 1, 1);
 
     std::cout << "Transactions processed in: " << std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start_time).count() << "ms" << std::endl;
