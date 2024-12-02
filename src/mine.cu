@@ -384,6 +384,10 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
     std::cout << "Time to copy transactions to GPU: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
     start = std::chrono::high_resolution_clock::now();
 
+    // print_db<<<1, 1>>>(d_db);
+    // gpuErrchk(cudaDeviceSynchronize());
+    // gpuErrchk(cudaPeekAtLastError());
+
     // Call the kernel
     dim3 block(block_size);
     dim3 grid((transactions_count + block.x) / block.x);
@@ -397,6 +401,10 @@ void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vect
 
     uint32_t number_of_candidates = primary.size();
     uint32_t candidate_size = 1;
+
+    // print_db_full<<<1, 1>>>(d_db);
+    // gpuErrchk(cudaDeviceSynchronize());
+    // gpuErrchk(cudaPeekAtLastError());
 
     thrust::device_vector<uint32_t> d_candidates = primary;
     thrust::device_vector<uint32_t> d_secondary_reference(primary.size(), 0);
