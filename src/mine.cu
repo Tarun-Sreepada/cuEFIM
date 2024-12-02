@@ -159,215 +159,7 @@ __global__ void create_new_candidates(uint32_t *candidates, uint32_t *candidate_
     return;
 }
 
-// void mine_patterns(params p, std::unordered_map<std::vector<uint32_t>, std::vector<uint32_t>, VectorHash> filtered_transactions,
-//                    std::vector<uint32_t> primary, std::vector<uint32_t> secondary,
-//                    std::vector<pattern> &frequent_patterns, std::unordered_map<uint32_t, std::string> &intToStr)
-// {
-//     auto start = std::chrono::high_resolution_clock::now();
 
-//     std::cout << "Number of transactions: " << filtered_transactions.size() << std::endl;
-
-//     secondary.push_back(1); // add 0 to the secondary list // cba to do conversions
-
-//     std::sort(secondary.begin(), secondary.end());
-//     std::sort(primary.begin(), primary.end());
-
-//     std::vector<uint32_t> transaction_start;
-//     std::vector<uint32_t> transaction_end;
-//     std::vector<key_value> item_utility;
-
-//     uint32_t max_transaction_length = 0;
-//     for (const auto &transaction : filtered_transactions)
-//     {
-//         transaction_start.push_back(item_utility.size());
-//         for (uint32_t i = 0; i < transaction.first.size(); i++)
-//         {
-//             item_utility.push_back({transaction.first[i], transaction.second[i]});
-//         }
-//         transaction_end.push_back(item_utility.size());
-//         max_transaction_length = std::max(max_transaction_length, (uint32_t)transaction.first.size());
-//     }
-
-//     std::cout << "Time to convert transactions: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
-//     start = std::chrono::high_resolution_clock::now();
-
-//     uint32_t shared_memory_requirement = max_transaction_length * sizeof(key_value) * bucket_factor; // twice as much just to be safe // tweak later
-//     std::cout << "Shared memory requirement: " << shared_memory_requirement * sizeof(key_value) << std::endl;
-//     // query the device for the maximum shared memory per block
-//     int device;
-//     cudaDeviceProp props;
-//     cudaGetDevice(&device);
-//     cudaGetDeviceProperties(&props, device);
-//     std::cout << "Max shared memory per block: " << props.sharedMemPerBlock << std::endl;
-//     if (shared_memory_requirement > props.sharedMemPerBlock)
-//         std::cerr << "Shared memory requirement exceeds the maximum shared memory per block" << std::endl;
-
-//     std::cout << "Time to convert transactions: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
-//     start = std::chrono::high_resolution_clock::now();
-
-//     // Create the database
-//     database *d_db;
-//     gpuErrchk(cudaMalloc(&d_db, sizeof(database)));
-
-//     uint32_t *d_transaction_start;
-//     uint32_t *d_transaction_end;
-
-//     key_value *d_item_utility;
-//     key_value *d_item_index;
-
-//     gpuErrchk(cudaMalloc(&d_transaction_start, transaction_start.size() * sizeof(uint32_t)));
-//     gpuErrchk(cudaMalloc(&d_transaction_end, transaction_end.size() * sizeof(uint32_t)));
-//     gpuErrchk(cudaMalloc(&d_item_utility, item_utility.size() * sizeof(key_value)));
-//     gpuErrchk(cudaMalloc(&d_item_index, item_utility.size() * bucket_factor * sizeof(key_value)));
-
-//     gpuErrchk(cudaMemcpy(d_transaction_start, transaction_start.data(), transaction_start.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
-//     gpuErrchk(cudaMemcpy(d_transaction_end, transaction_end.data(), transaction_end.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
-//     gpuErrchk(cudaMemcpy(d_item_utility, item_utility.data(), item_utility.size() * sizeof(key_value), cudaMemcpyHostToDevice));
-//     gpuErrchk(cudaMemset(d_item_index, 0, item_utility.size() * bucket_factor * sizeof(key_value)));
-
-//     uint32_t transactions_count = filtered_transactions.size();
-//     cudaMemcpy(&d_db->transactions_count, &transactions_count, sizeof(uint32_t), cudaMemcpyHostToDevice);
-//     cudaMemcpy(&d_db->transaction_start, &d_transaction_start, sizeof(uint32_t *), cudaMemcpyHostToDevice);
-//     cudaMemcpy(&d_db->transaction_end, &d_transaction_end, sizeof(uint32_t *), cudaMemcpyHostToDevice);
-//     cudaMemcpy(&d_db->item_utility, &d_item_utility, sizeof(key_value *), cudaMemcpyHostToDevice);
-//     cudaMemcpy(&d_db->item_index, &d_item_index, sizeof(key_value *), cudaMemcpyHostToDevice);
-//     gpuErrchk(cudaDeviceSynchronize());
-//     gpuErrchk(cudaPeekAtLastError());
-
-//     std::cout << "Time to copy transactions to GPU: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
-//     start = std::chrono::high_resolution_clock::now();
-
-//     // print_db<<<1, 1>>>(d_db);
-//     // gpuErrchk(cudaDeviceSynchronize());
-//     // gpuErrchk(cudaPeekAtLastError());
-
-//     // Call the kernel
-//     dim3 block(block_size);
-//     dim3 grid((transactions_count + block.x) / block.x);
-
-//     hash_transactions<<<grid, block>>>(d_db); // each thread will handle a transaction
-//     gpuErrchk(cudaDeviceSynchronize());
-//     gpuErrchk(cudaPeekAtLastError());
-
-//     std::cout << "Time to hash transactions: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
-//     start = std::chrono::high_resolution_clock::now();
-
-//     uint32_t number_of_candidates = primary.size();
-//     uint32_t candidate_size = 1;
-
-//     // print_db_full<<<1, 1>>>(d_db);
-//     // gpuErrchk(cudaDeviceSynchronize());
-//     // gpuErrchk(cudaPeekAtLastError());
-
-//     thrust::device_vector<uint32_t> d_candidates = primary;
-//     thrust::device_vector<uint32_t> d_secondary_reference(primary.size(), 0);
-//     thrust::device_vector<uint32_t> d_secondary = secondary;
-
-//     // uint32_t secondary_size = max element in secondary
-//     uint32_t secondary_size = secondary.size();
-//     thrust::device_vector<uint32_t> transaction_hits(transactions_count, 1);
-
-//     std::vector<std::pair<thrust::host_vector<uint32_t>, thrust::host_vector<uint32_t>>> original_patterns;
-
-//     while (number_of_candidates)
-//     {
-//         std::cout << "Number of candidates: " << number_of_candidates << std::endl;
-
-//         thrust::device_vector<uint32_t> d_candidate_utility(number_of_candidates, 0);
-//         thrust::device_vector<uint32_t> d_candidate_subtree_utility(number_of_candidates * secondary_size, 0);
-//         thrust::device_vector<uint32_t> d_candidate_local_utility(number_of_candidates * secondary_size, 0);
-
-//         // grid is number of transactions
-//         grid = dim3(transactions_count);
-
-//         searchGPU_shared_mem_k_v<<<grid, block, shared_memory_requirement>>>(d_db, thrust::raw_pointer_cast(transaction_hits.data()), transactions_count,
-//                                                               thrust::raw_pointer_cast(d_candidates.data()), number_of_candidates, candidate_size,
-//                                                               thrust::raw_pointer_cast(d_secondary.data()), secondary_size,
-//                                                               thrust::raw_pointer_cast(d_secondary_reference.data()),
-//                                                               thrust::raw_pointer_cast(d_candidate_utility.data()),
-//                                                               thrust::raw_pointer_cast(d_candidate_subtree_utility.data()),
-//                                                               thrust::raw_pointer_cast(d_candidate_local_utility.data()));
-
-//         gpuErrchk(cudaDeviceSynchronize());
-//         gpuErrchk(cudaPeekAtLastError());
-
-//         thrust::host_vector<uint32_t> h_candidates = d_candidates;
-//         thrust::host_vector<uint32_t> h_candidate_utility = d_candidate_utility;
-//         original_patterns.push_back({h_candidates, h_candidate_utility});
-
-//         candidate_size += 1;
-
-//         thrust::device_vector<uint32_t> d_number_of_new_candidates_per_candidate(number_of_candidates + 1, 0);
-
-//         grid = dim3(number_of_candidates / block_size + 1, 1, 1);
-//         clean_subtree_local_utility<<<grid, block>>>(number_of_candidates, thrust::raw_pointer_cast(d_number_of_new_candidates_per_candidate.data()),
-//                                                       thrust::raw_pointer_cast(d_candidate_subtree_utility.data()), thrust::raw_pointer_cast(d_candidate_local_utility.data()),
-//                                                       secondary_size, p.min_utility);
-
-//         uint32_t number_of_new_candidates = thrust::reduce(d_number_of_new_candidates_per_candidate.begin(), d_number_of_new_candidates_per_candidate.end());
-//         thrust::inclusive_scan(d_number_of_new_candidates_per_candidate.begin(), d_number_of_new_candidates_per_candidate.end(), d_number_of_new_candidates_per_candidate.begin());
-//         if (number_of_new_candidates == 0) break;
-//         thrust::device_vector<uint32_t> d_new_candidates(number_of_new_candidates * candidate_size, 0);
-//         thrust::device_vector<uint32_t> d_new_secondary_reference(number_of_new_candidates, 0);
-
-//         grid = dim3(number_of_candidates / block_size + 1, 1, 1);
-//         create_new_candidates<<<grid,block>>>(thrust::raw_pointer_cast(d_candidates.data()), thrust::raw_pointer_cast(d_candidate_subtree_utility.data()),
-//                                             number_of_candidates,thrust::raw_pointer_cast(d_new_candidates.data()),
-//                                             thrust::raw_pointer_cast(d_new_secondary_reference.data()), secondary_size, candidate_size,
-//                                             thrust::raw_pointer_cast(d_number_of_new_candidates_per_candidate.data()));
-
-//         gpuErrchk(cudaDeviceSynchronize());
-//         gpuErrchk(cudaPeekAtLastError());
-
-//         d_candidates = d_new_candidates;
-//         d_secondary = d_candidate_local_utility;
-//         d_secondary_reference = d_new_secondary_reference;
-//         number_of_candidates = number_of_new_candidates;
-
-//     }
-
-//     std::cout << "GPU Mining Time: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
-//     start = std::chrono::high_resolution_clock::now();
-
-//     for (uint32_t i = 0; i < original_patterns.size(); i++)
-//     {
-//         thrust::host_vector<uint32_t> h_candidates = original_patterns[i].first;
-//         thrust::host_vector<uint32_t> h_candidate_utility = original_patterns[i].second;
-
-//         uint32_t size = i + 1;
-
-//         for (uint32_t j = 0; j < h_candidate_utility.size(); j++)
-//         {
-//             if (h_candidate_utility[j] < p.min_utility)
-//             {
-//                 continue;
-//             }
-//             pattern p;
-//             for (uint32_t k = 0; k < i + 1; k++)
-//             {
-//                 // std::cout << intToStr[h_candidates[j * size + k]] << " ";
-//                 p.items_names.push_back(intToStr[h_candidates[j * size + k]]);
-//             }
-//             // std::cout << "#UTIL: " << h_candidate_utility[j] << std::endl;
-//             p.utility = h_candidate_utility[j];
-//             frequent_patterns.push_back(p);
-//         }
-//     }
-
-//     std::cout << "Pattern conversion time: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() << "ms" << std::endl;
-//     start = std::chrono::high_resolution_clock::now();
-// }
-
-
-#include <iostream>
-#include <vector>
-#include <unordered_map>
-#include <algorithm>
-#include <chrono>
-#include <cuda.h>
-#include <cuda_runtime.h>
-#include <thrust/device_vector.h>
-#include <thrust/host_vector.h>
 
 // Define necessary structures and functions (assuming they are defined elsewhere)
 // For example: params, pattern, key_value, database, gpuErrchk, hash_transactions,
@@ -440,30 +232,30 @@ size_t copy_transactions_to_gpu(const std::vector<uint32_t> &transaction_start,
     size_t total_gpu_memory = 0;
 
     // Allocate database on GPU
-    gpuErrchk(cudaMalloc(&d_db, sizeof(database)));
+    gpuErrchk(cudaMallocManaged(&d_db, sizeof(database)));
     total_gpu_memory += sizeof(database);
 
     // Allocate and copy transaction start indices
     uint32_t *d_transaction_start = nullptr;
-    gpuErrchk(cudaMalloc(&d_transaction_start, transaction_start.size() * sizeof(uint32_t)));
+    gpuErrchk(cudaMallocManaged(&d_transaction_start, transaction_start.size() * sizeof(uint32_t)));
     gpuErrchk(cudaMemcpy(d_transaction_start, transaction_start.data(), transaction_start.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
     total_gpu_memory += transaction_start.size() * sizeof(uint32_t);
 
     // Allocate and copy transaction end indices
     uint32_t *d_transaction_end = nullptr;
-    gpuErrchk(cudaMalloc(&d_transaction_end, transaction_end.size() * sizeof(uint32_t)));
+    gpuErrchk(cudaMallocManaged(&d_transaction_end, transaction_end.size() * sizeof(uint32_t)));
     gpuErrchk(cudaMemcpy(d_transaction_end, transaction_end.data(), transaction_end.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
     total_gpu_memory += transaction_end.size() * sizeof(uint32_t);
 
     // Allocate and copy item utilities
     key_value *d_item_utility = nullptr;
-    gpuErrchk(cudaMalloc(&d_item_utility, item_utility.size() * sizeof(key_value)));
+    gpuErrchk(cudaMallocManaged(&d_item_utility, item_utility.size() * sizeof(key_value)));
     gpuErrchk(cudaMemcpy(d_item_utility, item_utility.data(), item_utility.size() * sizeof(key_value), cudaMemcpyHostToDevice));
     total_gpu_memory += item_utility.size() * sizeof(key_value);
 
     // Allocate item index (size depends on bucket_factor)
     key_value *d_item_index = nullptr;
-    gpuErrchk(cudaMalloc(&d_item_index, item_utility.size() * bucket_factor * sizeof(key_value)));
+    gpuErrchk(cudaMallocManaged(&d_item_index, item_utility.size() * bucket_factor * sizeof(key_value)));
     gpuErrchk(cudaMemset(d_item_index, 0, item_utility.size() * bucket_factor * sizeof(key_value)));
     total_gpu_memory += item_utility.size() * bucket_factor * sizeof(key_value);
 
@@ -517,14 +309,14 @@ void mine_gpu_patterns(const params &p,
     gpuErrchk(cudaPeekAtLastError());
 
     // Initialize candidate patterns
-    thrust::device_vector<uint32_t> d_candidates = primary;
-    thrust::device_vector<uint32_t> d_secondary_reference(primary.size(), 0);
-    thrust::device_vector<uint32_t> d_secondary = secondary;
+    thrust::universal_vector<uint32_t> d_candidates = primary;
+    thrust::universal_vector<uint32_t> d_secondary_reference(primary.size(), 0);
+    thrust::universal_vector<uint32_t> d_secondary = secondary;
 
     uint32_t number_of_candidates = static_cast<uint32_t>(primary.size());
     uint32_t candidate_size = 1;
 
-    thrust::device_vector<uint32_t> transaction_hits(transactions_count, 1);
+    thrust::universal_vector<uint32_t> transaction_hits(transactions_count, 1);
 
     std::vector<std::pair<thrust::host_vector<uint32_t>, thrust::host_vector<uint32_t>>> original_patterns;
 
@@ -533,9 +325,9 @@ void mine_gpu_patterns(const params &p,
     {
         std::cout << "Number of candidates: " << number_of_candidates << std::endl;
 
-        thrust::device_vector<uint32_t> d_candidate_utility(number_of_candidates, 0);
-        thrust::device_vector<uint32_t> d_candidate_subtree_utility(number_of_candidates * secondary.size(), 0);
-        thrust::device_vector<uint32_t> d_candidate_local_utility(number_of_candidates * secondary.size(), 0);
+        thrust::universal_vector<uint32_t> d_candidate_utility(number_of_candidates, 0);
+        thrust::universal_vector<uint32_t> d_candidate_subtree_utility(number_of_candidates * secondary.size(), 0);
+        thrust::universal_vector<uint32_t> d_candidate_local_utility(number_of_candidates * secondary.size(), 0);
 
         // Call the search kernel
         grid = dim3(transactions_count);
@@ -563,7 +355,7 @@ void mine_gpu_patterns(const params &p,
         candidate_size += 1;
 
         // Clean up candidate utilities and prepare for next iteration
-        thrust::device_vector<uint32_t> d_number_of_new_candidates_per_candidate(number_of_candidates + 1, 0);
+        thrust::universal_vector<uint32_t> d_number_of_new_candidates_per_candidate(number_of_candidates + 1, 0);
 
         grid = dim3((number_of_candidates + block_size - 1) / block_size);
         clean_subtree_local_utility<<<grid, block>>>(number_of_candidates,
@@ -584,8 +376,8 @@ void mine_gpu_patterns(const params &p,
             break;
         }
 
-        thrust::device_vector<uint32_t> d_new_candidates(number_of_new_candidates * candidate_size, 0);
-        thrust::device_vector<uint32_t> d_new_secondary_reference(number_of_new_candidates, 0);
+        thrust::universal_vector<uint32_t> d_new_candidates(number_of_new_candidates * candidate_size, 0);
+        thrust::universal_vector<uint32_t> d_new_secondary_reference(number_of_new_candidates, 0);
 
         create_new_candidates<<<grid, block>>>(thrust::raw_pointer_cast(d_candidates.data()),
                                                thrust::raw_pointer_cast(d_candidate_subtree_utility.data()),

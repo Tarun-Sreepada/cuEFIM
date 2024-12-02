@@ -37,6 +37,17 @@
 #include <thrust/host_vector.h>
 #include <thrust/sort.h>
 
+#include <iostream>
+#include <vector>
+#include <unordered_map>
+#include <algorithm>
+#include <chrono>
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <thrust/universal_vector.h>
+#include <thrust/host_vector.h>
+#include <thrust/universal_vector.h>
+
 #include "database.cuh"
 
 
