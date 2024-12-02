@@ -16,6 +16,17 @@ void print_help(int argc, char *argv[])
     exit(0);
 }
 
+
+void reportMemoryUsage() {
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        // The maximum resident set size used (in kilobytes)
+        std::cout << "Maximum resident set size: " << usage.ru_maxrss << " KB" << std::endl;
+    } else {
+        std::cerr << "Error getting resource usage" << std::endl;
+    }
+}
+
 params parse_arguments(int argc, char *argv[]) {
 
     params p;
@@ -158,6 +169,8 @@ int main(int argc, char *argv[]) {
     double duration = std::chrono::duration_cast<std::chrono::milliseconds>(r.end_time - r.start_time).count();
     duration /= 1000;
     std::cout << "Execution time: " << duration << "s" << std::endl;
+    // Report memory usage
+    reportMemoryUsage();
 
 
     return 0;

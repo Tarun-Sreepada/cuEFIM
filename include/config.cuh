@@ -48,6 +48,8 @@
 #include <thrust/host_vector.h>
 #include <thrust/universal_vector.h>
 
+#include <sys/resource.h>
+
 #include "database.cuh"
 
 
