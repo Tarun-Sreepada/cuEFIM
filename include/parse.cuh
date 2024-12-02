@@ -16,5 +16,4 @@ std::tuple<
     std::vector<uint32_t>,
     std::unordered_map<uint32_t, std::string>>
                     parse_file(
-                        const params &p,
-                        std::vector<pattern> &patterns);
+                        const params &p);

@@ -74,14 +74,40 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+
+    //  std::vector<std::pair<thrust::host_vector<uint32_t>, thrust::host_vector<uint32_t>>> intPatterns;
     // write patterns to output file
-    for (const auto &[pattern, util] : intPatterns) {
-        for (const auto &item : pattern) {
-            outputFile << id2item[item] << " ";
+    // for (const auto &[pattern, util] : intPatterns) {
+
+
+
+    //     // for (const auto &item : pattern) {
+    //     //     outputFile << id2item[item] << " ";
+    //     // }
+    //     // outputFile << "(" << util.back() << ")" << std::endl;
+    // }
+
+    for (int i = 0; i < intPatterns.size(); i++) {
+        uint32_t size = i + 1;
+        thrust::host_vector<uint32_t> pattern = intPatterns[i].first;
+        thrust::host_vector<uint32_t> util = intPatterns[i].second;
+
+        uint32_t number_of_patterns = pattern.size() / size;
+        
+        for (int j = 0; j < number_of_patterns; j++) {
+            if (util[j] < minutil) {
+                continue;
+            }
+            for (int k = 0; k < size; k++) {
+                outputFile << id2item[pattern[j * size + k]] << " ";
+            }
+            outputFile << "(" << util[j] << ")" << std::endl;
         }
-        outputFile << "(" << util.back() << ")" << std::endl;
+        
+
     }
 
+    outputFile.close();
 
     return 0;
 }

@@ -253,8 +253,8 @@ class GPUEFIM:
             if len(transaction) > 0:
                 val = [x[1] for x in transaction]
                 key = [x[0] for x in transaction]
-                print([self.rename[x] for x in key], val)
-                print(key)
+                # print([self.rename[x] for x in key], val)
+                # print(key)
                 
                 fs = frozenset(key)
 
@@ -297,12 +297,12 @@ class GPUEFIM:
         self.indexesEnd = cp.array(indexesEnd, dtype=np.uint32)
 
         primary = [key for key in subtree.keys() if subtree[key] >= self.minUtil]
-        print("Primary: ", primary)
+        # print("Primary: ", primary)
         
 
         # secondary is from 0 to len(secondary) - 1
         secondary = [i for i in range(len(secondary) + 1)]
-        print("Secondary: ", secondary)
+        # print("Secondary: ", secondary)
 
         self.secondaryLen = len(secondary)
         self.numTransactions = len(filtered_transactions)
@@ -352,11 +352,6 @@ class GPUEFIM:
             costs = cp.zeros(numCandidates, dtype=np.uint32)
             localUtil = cp.zeros(numCandidates * self.secondaryLen, dtype=np.uint32)
             subtreeUtil = cp.zeros(numCandidates * self.secondaryLen, dtype=np.uint32)
-
-            # items, utils, indexesStart, indexesEnd, numTransactions
-            # candidates, candidateSize, numCandidates,
-            # candidateCost, candidateLocalUtil, candidateSubtreeUtil, 
-            # secondaryReference, secondaries, numSecondaries
 
             numOfThreads = 32
             numOfBlocks = self.numTransactions // numOfThreads + 1
@@ -497,11 +492,11 @@ if __name__ == "__main__":
     # inputFile = 'EFIM/accidents_utility_spmf.txt'
     # minUtil = 19000000
 
-    # inputFile = 'datasets/chainstore.txt'
-    # minUtil = 1000000
+    inputFile = '/home/tarun/cudaEFIM/datasets/chainstore.txt'
+    minUtil = 5000000
 
-    inputFile = '/home/tarun/cudaEFIM/datasets/test.txt'
-    minUtil = 40
+    # inputFile = '/home/tarun/cudaEFIM/datasets/test.txt'
+    # minUtil = 5
 
     # inputFile = "EFIM/BMS_utility_spmf.txt"
     # minUtil = 2030000

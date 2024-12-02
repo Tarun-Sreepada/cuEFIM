@@ -501,6 +501,8 @@ void searchSM(thrust::device_vector<uint32_t> items, thrust::device_vector<uint3
         cleanSubtreeLocal<<<blocks, BLOCK_SIZE>>>(numCands, thrust::raw_pointer_cast(numNewCandsPerCand.data()), thrust::raw_pointer_cast(subtreeUtils.data()), thrust::raw_pointer_cast(localUtils.data()), numSecondary, minutil);
         uint32_t totalNumNewCands = thrust::reduce(thrust::device, numNewCandsPerCand.begin(), numNewCandsPerCand.end());
 
+
+
         thrust::inclusive_scan(numNewCandsPerCand.begin(), numNewCandsPerCand.end(), numNewCandsPerCand.begin());
 
         thrust::device_vector<uint32_t> newCands(totalNumNewCands * candSize);

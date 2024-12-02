@@ -150,8 +150,7 @@ std::vector<key_value> build_transaction(
 void update_utilities(
     const std::vector<key_value>& transaction,
     std::unordered_map<uint32_t, uint32_t>& subtree_util,
-    std::unordered_map<uint32_t, uint32_t>& secondary_util,
-    std::unordered_map<uint32_t, uint32_t>& single_item_pattern)
+    std::unordered_map<uint32_t, uint32_t>& secondary_util)
 {
     uint32_t weight = std::accumulate(transaction.begin(), transaction.end(), uint32_t(0),
                                       [](uint32_t sum, const auto& entry) {
@@ -164,22 +163,9 @@ void update_utilities(
         subtree_util[item_id] += weight - temp;
         secondary_util[item_id] += weight;
         temp += value;
-        single_item_pattern[item_id] += value;
     }
 }
 
-// Helper function to collect frequent items
-void collect_frequent_items(
-    const std::unordered_map<uint32_t, uint32_t>& single_item_pattern,
-    uint32_t min_utility,
-    std::vector<pattern>& patterns)
-{
-    for (const auto& entry : single_item_pattern) {
-        if (entry.second >= min_utility) {
-            patterns.push_back({ { entry.first }, { }, entry.second });
-        }
-    }
-}
 
 // Helper function to collect primary and secondary items
 void collect_primary_secondary(
@@ -209,13 +195,11 @@ std::tuple<
 > process_transactions(
     const file_data &fd,
     const std::unordered_map<std::string, uint32_t>& strToInt,
-    uint32_t min_utility,
-    std::vector<pattern>& patterns)
+    uint32_t min_utility)
 {
     std::unordered_map<std::vector<uint32_t>, std::vector<uint32_t>, VectorHash> filtered_transactions;
     std::unordered_map<uint32_t, uint32_t> subtree_util;
     std::unordered_map<uint32_t, uint32_t> secondary_util;
-    std::unordered_map<uint32_t, uint32_t> single_item_pattern;
 
     for (const auto& data : fd.data) {
         
@@ -239,7 +223,7 @@ std::tuple<
             }
 
             // Update utilities
-            update_utilities(transaction, subtree_util, secondary_util, single_item_pattern);
+            update_utilities(transaction, subtree_util, secondary_util);
 
             // update_filtered_transactions(transaction_keys, transaction_values, filtered_transactions);
             auto it = filtered_transactions.find(transaction_keys);
@@ -253,9 +237,6 @@ std::tuple<
 
         }
     }
-
-    // Collect frequent items
-    collect_frequent_items(single_item_pattern, min_utility, patterns);
 
     // Collect primary and secondary items
     std::vector<uint32_t> primary;
@@ -285,9 +266,7 @@ std::tuple<
     std::vector<uint32_t>, // primary
     std::vector<uint32_t>, // secondary
     std::unordered_map<uint32_t, std::string>> // intToStr 
-parse_file(
-    const params& p,
-    std::vector<pattern>& patterns)
+parse_file(const params& p)
 {
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -314,7 +293,7 @@ parse_file(
     start_time = std::chrono::high_resolution_clock::now();
 
     // Process transactions
-    auto [filtered_transactions, primary, secondary] = process_transactions(file_data, strToInt, p.min_utility, patterns);
+    auto [filtered_transactions, primary, secondary] = process_transactions(file_data, strToInt, p.min_utility);
 
     std::cout << "Transactions processed in: " << std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start_time).count() << "ms" << std::endl;

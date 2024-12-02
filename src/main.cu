@@ -130,14 +130,14 @@ int main(int argc, char *argv[]) {
     r.start_time = std::chrono::high_resolution_clock::now();
 
     std::vector<pattern> frequent_patterns;
-    auto [filtered_transactions, primary, secondary, intToStr] = parse_file(p, frequent_patterns);
+    auto [filtered_transactions, primary, secondary, intToStr] = parse_file(p);
     std::cout << "Time to parse file: " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - r.start_time).count() << "ms" << std::endl;
 
-    mine_patterns(p, filtered_transactions, primary, secondary, frequent_patterns);
+    mine_patterns(p, filtered_transactions, primary, secondary, frequent_patterns, intToStr);
 
 
     r.end_time = std::chrono::high_resolution_clock::now();
-    std::cout << "Frequent Patterns: " << frequent_patterns.size() << std::endl;
+    // std::cout << "Frequent Patterns: " << frequent_patterns.size() << std::endl;
 
     double duration = std::chrono::duration_cast<std::chrono::milliseconds>(r.end_time - r.start_time).count();
     duration /= 1000;
