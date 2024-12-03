@@ -13,12 +13,16 @@ char get_separator(const std::string &separator)
 
 // Function to parse line components
 bool parse_line_components(const std::string &line, std::string &keys_str, std::string &weight_str, std::string &values_str) {
-    std::istringstream iss(line);
-    if (!std::getline(iss, keys_str, ':') ||
-        !std::getline(iss, weight_str, ':') ||
-        !std::getline(iss, values_str, ':')) {
-        return false;
-    }
+    size_t pos1 = line.find(':');
+    if (pos1 == std::string::npos) return false;
+
+    size_t pos2 = line.find(':', pos1 + 1);
+    if (pos2 == std::string::npos) return false;
+
+    keys_str = line.substr(0, pos1);
+    weight_str = line.substr(pos1 + 1, pos2 - pos1 - 1);
+    values_str = line.substr(pos2 + 1);
+
     return !keys_str.empty() && !weight_str.empty() && !values_str.empty();
 }
 
@@ -26,28 +30,48 @@ bool parse_line_components(const std::string &line, std::string &keys_str, std::
 // Function to parse keys and update 'twu'
 void parse_keys(const std::string &keys_str, char separator_char, uint32_t weight,
                 std::unordered_map<std::string, uint32_t> &twu, std::vector<std::string> &keys) {
-    std::istringstream keys_stream(keys_str);
-    std::string key;
-    while (std::getline(keys_stream, key, separator_char)) {
+    size_t start = 0;
+    size_t end = keys_str.find(separator_char);
+    while (end != std::string::npos) {
+        std::string key = keys_str.substr(start, end - start);
         keys.push_back(key);
         twu[key] += weight;
+        start = end + 1;
+        end = keys_str.find(separator_char, start);
     }
+    // Add the last key
+    std::string key = keys_str.substr(start);
+    keys.push_back(key);
+    twu[key] += weight;
 }
 
 
+
 bool parse_values(const std::string &values_str, char separator_char, std::vector<uint32_t> &values) {
-    std::istringstream values_stream(values_str);
-    std::string value_str;
-    while (std::getline(values_stream, value_str, separator_char)) {
+    size_t start = 0;
+    size_t end = values_str.find(separator_char);
+    while (end != std::string::npos) {
+        std::string_view value_str = std::string_view(values_str).substr(start, end - start);
         try {
-            values.push_back(std::stoull(value_str));
+            values.push_back(std::stoul(std::string(value_str)));
         } catch (const std::exception &e) {
             std::cerr << "Invalid value: " << value_str << " -> " << e.what() << std::endl;
             return false;
         }
+        start = end + 1;
+        end = values_str.find(separator_char, start);
+    }
+    // Add the last value
+    std::string_view value_str = std::string_view(values_str).substr(start);
+    try {
+        values.push_back(std::stoul(std::string(value_str)));
+    } catch (const std::exception &e) {
+        std::cerr << "Invalid value: " << value_str << " -> " << e.what() << std::endl;
+        return false;
     }
     return true;
 }
+
 
 // Function to process a single line
 bool process_line(const std::string &line, char separator_char,
@@ -89,7 +113,6 @@ bool process_line(const std::string &line, char separator_char,
 }
 
 file_data read_file(const params &p, std::unordered_map<std::string, uint32_t> &twu, char separator_char) {
-
     file_data file;
     std::ifstream input(p.input_file);
 
@@ -98,28 +121,24 @@ file_data read_file(const params &p, std::unordered_map<std::string, uint32_t> &
         exit(1);
     }
 
+    std::ios::sync_with_stdio(false); // Untie C++ streams from C streams
     std::string line;
+
     while (std::getline(input, line)) {
         line_data ld;
-        try {
-            if (process_line(line, separator_char, twu, ld)) {
-                file.data.push_back(std::move(ld));
-            }
-        } catch (const std::exception &e) {
-            std::cerr << "Error processing line: " << line << " -> " << e.what() << std::endl;
+        if (process_line(line, separator_char, twu, ld)) {
+            file.data.emplace_back(std::move(ld));
         }
     }
     input.close();
     return file;
 }
 
-std::vector<item_utility> filter_and_sort_twu(const std::unordered_map<std::string, uint32_t> &twu, uint32_t min_utility)
-{
+
+std::vector<item_utility> filter_and_sort_twu(const std::unordered_map<std::string, uint32_t> &twu, uint32_t min_utility) {
     std::vector<item_utility> sorted_twu;
-    for (const auto &entry : twu)
-    {
-        if (entry.second >= min_utility)
-        {
+    for (const auto &entry : twu) {
+        if (entry.second >= min_utility) {
             sorted_twu.push_back({entry.first, entry.second});
         }
     }
@@ -130,6 +149,7 @@ std::vector<item_utility> filter_and_sort_twu(const std::unordered_map<std::stri
 
     return sorted_twu;
 }
+
 
 // Helper function to build a transaction from line data
 std::vector<key_value> build_transaction(
@@ -242,20 +262,24 @@ void map_items_to_ids(
     std::unordered_map<std::string, uint32_t>& strToInt,
     std::unordered_map<uint32_t, std::string>& intToStr)
 {
-    uint32_t id = sorted_twu.size();
+    uint32_t id = 1;
+    strToInt.reserve(sorted_twu.size());
+    intToStr.reserve(sorted_twu.size());
+
     for (const auto& entry : sorted_twu) {
         const std::string& item = entry.item;
         intToStr[id] = item;
-        strToInt[item] = id--;
+        strToInt[item] = id++;
     }
 }
 
+
 // Main function to parse the file
 std::tuple<
-    std::unordered_map<std::vector<uint32_t>, std::vector<uint32_t>, VectorHash>, // filtered_transactions
-    std::vector<uint32_t>, // primary
-    std::vector<uint32_t>, // secondary
-    std::unordered_map<uint32_t, std::string>> // intToStr 
+    std::unordered_map<std::vector<uint32_t>, std::vector<uint32_t>, VectorHash>,
+    std::vector<uint32_t>,
+    std::vector<uint32_t>,
+    std::unordered_map<uint32_t, std::string>> 
 parse_file(const params& p)
 {
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -267,11 +291,11 @@ parse_file(const params& p)
     auto file_data = read_file(p, twu, separator_char);
     std::cout << "File read in: " << std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start_time).count() << "ms" << std::endl;
+
     start_time = std::chrono::high_resolution_clock::now();
 
     // Filter and sort TWU
     auto sorted_twu = filter_and_sort_twu(twu, p.min_utility);
-
 
     // Map items to integer IDs
     std::unordered_map<std::string, uint32_t> strToInt;
@@ -280,18 +304,15 @@ parse_file(const params& p)
 
     std::cout << "Items mapped in: " << std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start_time).count() << "ms" << std::endl;
+
     start_time = std::chrono::high_resolution_clock::now();
 
     // Process transactions
     auto [filtered_transactions, primary, secondary] = process_transactions(file_data, strToInt, p.min_utility);
-    // fill secondary with 1
-    secondary.resize(intToStr.size() + 1, 1);
+    secondary.assign(intToStr.size() + 1, 1);
 
     std::cout << "Transactions processed in: " << std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::high_resolution_clock::now() - start_time).count() << "ms" << std::endl;
-    start_time = std::chrono::high_resolution_clock::now();
 
-    // return { filtered_transactions, primary, secondary, intToStr };
-    return std::make_tuple(filtered_transactions, primary, secondary, intToStr);
-
+    return { std::move(filtered_transactions), std::move(primary), std::move(secondary), std::move(intToStr) };
 }
