@@ -10,56 +10,56 @@ ssize_t file_size(const std::string &file_path)
     }
     return st.st_size;
 }
-
-// transaction parse_line(processed bytes, retreived bytes, data, seperator char, twu)
-transaction parse_line(size_t &processed_bytes, size_t retrieved_bytes, const char *data, char separator_char, std::unordered_map<uint32_t, uint32_t> &twu)
+void parse_file(size_t &processed_bytes, size_t retrieved_bytes,
+                const char *data, char separator_char,
+                std::unordered_map<uint32_t, uint32_t> &twu, database &db)
 {
-    transaction t;
     uint32_t total_utility = 0;
-    size_t start = processed_bytes;
+    db.compressed_spare_row_db.clear();
+    uint32_t transaction_start_index = db.compressed_spare_row_db.size();
     size_t item_count = 0;
-
-    // Reserve space for item utilities upfront to reduce memory allocations
-    t.item_utility.reserve(100); // Initial guess nice to have
-
-    // Parsing state
-    enum ParseState { PARSE_ITEMS, PARSE_TOTAL_UTILITY, PARSE_UTILITIES };
+    db.csr_transaction_start.push_back(transaction_start_index);
+    enum ParseState
+    {
+        PARSE_ITEMS,
+        PARSE_TOTAL_UTILITY,
+        PARSE_UTILITIES
+    };
     ParseState state = PARSE_ITEMS;
 
-    while (start < retrieved_bytes)
+    while (processed_bytes < retrieved_bytes)
     {
-        size_t end = start;
+        #ifdef DEBUG
+            std::cout << "\r" << std::setw(10) << processed_bytes << " / " << std::setw(10) << retrieved_bytes << std::flush;
+        #endif 
+        size_t end = processed_bytes;
         // Find next separator or delimiter
         while (end < retrieved_bytes && data[end] != separator_char && data[end] != ':' && data[end] != '\n')
         {
             end++;
         }
 
-        if (end == start) // Empty segment, move to the next character
+        if (end == processed_bytes) // Empty segment, move to the next character
         {
-            start++;
+            processed_bytes++;
             continue;
         }
 
         uint32_t value = 0;
-        auto result = std::from_chars(data + start, data + end, value);
+        auto result = std::from_chars(data + processed_bytes, data + end, value);
         if (result.ec != std::errc())
         {
-            std::cerr << "Error parsing value\n";
+            std::cerr << "Error parsing value at position " << processed_bytes << "\n";
             exit(1);
         }
 
         switch (state)
         {
         case PARSE_ITEMS:
+            db.compressed_spare_row_db.push_back({value, 0});
             if (data[end] == ':') // End of items section
             {
-                t.item_utility.push_back({value, 0});
                 state = PARSE_TOTAL_UTILITY;
-            }
-            else
-            {
-                t.item_utility.push_back({value, 0});
             }
             break;
 
@@ -69,39 +69,49 @@ transaction parse_line(size_t &processed_bytes, size_t retrieved_bytes, const ch
             break;
 
         case PARSE_UTILITIES:
-            if (item_count >= t.item_utility.size())
+            if (item_count + transaction_start_index < db.compressed_spare_row_db.size())
             {
-                std::cerr << "Error: Item count does not match item utility count\n";
-                exit(1);
+                db.compressed_spare_row_db[item_count + transaction_start_index].value = value;
+                twu[db.compressed_spare_row_db[item_count + transaction_start_index].key] += total_utility;
+                item_count++;
             }
-            t.item_utility[item_count].value = value;
-            twu[t.item_utility[item_count].key] += total_utility;
-            item_count++;
             break;
         }
 
         // Move to the next segment
-        start = end + 1;
+        processed_bytes = end + 1;
 
         // Break if newline or end of buffer is reached
         if (end >= retrieved_bytes || data[end] == '\n') // Safe bounds check
         {
-            break;
+            // Check if we have processed items correctly
+            if (item_count + transaction_start_index != db.compressed_spare_row_db.size())
+            {
+                std::cerr << "\nError: Item count does not match item utility count\n";
+                std::cerr << "Item count: " << item_count << " Spare row db size: " << db.compressed_spare_row_db.size() << " Transaction start index: " << transaction_start_index << std::endl;
+                exit(1);
+            }
+            // Reset for the next transaction
+            state = PARSE_ITEMS;
+            transaction_start_index += item_count; // Update transaction start index correctly
+            db.csr_transaction_start.push_back(transaction_start_index);
+            db.csr_transaction_end.push_back(transaction_start_index);
+            item_count = 0;
         }
     }
 
-    // Validate item count
-    if (item_count != t.item_utility.size())
-    {
-        std::cerr << "Error: Mismatch between items and utilities\n";
-        exit(1);
-    }
-
-    processed_bytes = start; // Update processed bytes
-    return t;
+    #ifdef DEBUG
+        std::cout << std::endl;
+        for (uint32_t i = 0; i < db.csr_transaction_end.size(); i++)
+        {
+            for (uint32_t j = db.csr_transaction_start[i]; j < db.csr_transaction_end[i]; j++)
+            {
+                std::cout << db.compressed_spare_row_db[j].key << ":" << db.compressed_spare_row_db[j].value << " ";
+            }
+            std::cout << std::endl;
+        }
+    #endif
 }
-
-
 
 void read_file(results &r, params &p)
 {
@@ -247,14 +257,7 @@ void read_file(results &r, params &p)
 #endif
 
     r.file_read_time = std::chrono::high_resolution_clock::now();
-
-    while (rf.processed_bytes < rf.retrieved_bytes)
-    {
-#ifdef DEBUG
-        std::cout << "\r" << std::setw(10) << rf.processed_bytes << " / " << std::setw(10) << rf.retrieved_bytes << std::flush;
-#endif
-        db.transactions.push_back(parse_line(rf.processed_bytes, rf.retrieved_bytes, rf.data, p.separator_char, twu));
-    }
+    parse_file(rf.processed_bytes, rf.retrieved_bytes, rf.data, p.separator_char, twu, db);
     r.parse_time = std::chrono::high_resolution_clock::now();
 
 #ifdef DEBUG

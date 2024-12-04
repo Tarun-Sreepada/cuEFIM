@@ -36,17 +36,7 @@ int main(int argc, char *argv[]) {
     // }
 
     // for (const auto &pattern : frequent_patterns) {
-    //     for (const auto &item : pattern.items_names) {
-    //         output_file << item << " ";
-    //     }
-    //     output_file << "#UTIL: " << pattern.utility << std::endl;
-    // }
-
-    // output_file.close();
-
-    // double duration = std::chrono::duration_cast<std::chrono::milliseconds>(r.end_time - r.start_time).count();
-    // duration /= 1000;
-    // std::cout << "Execution time: " << duration << "s" << std::endl;
+    //     for (const auto &item : pattern.items_name
 
 
     return 0;

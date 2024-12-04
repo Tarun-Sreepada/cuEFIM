@@ -14,6 +14,18 @@ struct transaction
 
 struct database
 {
-    std::vector<transaction> transactions;
-};
+    std::vector<key_value> compressed_spare_row_db;
+    std::vector<size_t> csr_transaction_start;
+    std::vector<size_t> csr_transaction_end;
 
+    database()
+    {
+    }
+
+    ~database()
+    {
+        compressed_spare_row_db.clear();
+        csr_transaction_start.clear();
+        csr_transaction_end.clear();
+    }
+};
