@@ -1,17 +1,17 @@
-#include "database.cuh"
+#include "../main.cuh"
 
+__device__ uint32_t pcg_hash(uint32_t input)
+{
+    uint32_t state = input * 747796405u + 2891336453u;
+    uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
 
-// __device__ uint32_t pcg_hash(uint32_t input)
-// {
-//     uint32_t state = input * 747796405u + 2891336453u;
-//     uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-//     return (word >> 22u) ^ word;
-// }
+// Hash function
+__device__ uint32_t hashFunction(uint32_t key, uint32_t tableSize) {
+    return pcg_hash(key) % tableSize;
+}
 
-// // Hash function
-// __device__ uint32_t hashFunction(uint32_t key, uint32_t tableSize) {
-//     return pcg_hash(key) % tableSize;
-// }
 
 // // Device function to query an item in the hash table
 // __device__ int64_t query_item(key_value *item_index, uint32_t start_search, uint32_t end_search, uint32_t item) {

@@ -29,11 +29,9 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GN
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address")
 endif()
 
-# Note: CUDA does not support -fsanitize. Use external tools like cuda-memcheck.
-
 # Auto-detect CUDA architectures
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES "75;80") # Adjust for your target architectures
+    set(CMAKE_CUDA_ARCHITECTURES native) # Adjust for your target architectures
 endif()
 
 # Include directories
@@ -59,7 +57,7 @@ include_directories(${LIBURING_INCLUDE_DIR})
 
 # Add the executable
 add_executable(cuEFIM
-    main.cu   # Entry point (CUDA file)
+    main.cu   # Entry point
     ${SRC_CPP_FILES} # All .cpp files
     ${SRC_CU_FILES}  # All .cu files
 )
@@ -73,14 +71,34 @@ set_target_properties(cuEFIM PROPERTIES
 # Link liburing and CUDA runtime
 target_link_libraries(cuEFIM PRIVATE ${LIBURING_LIB} cuda)
 
+# Print nvcc version
+message(STATUS "Querying nvcc version...")
+execute_process(
+    COMMAND ${CMAKE_CUDA_COMPILER} --version
+    OUTPUT_VARIABLE NVCC_VERSION_OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+message(STATUS "nvcc version:\n${NVCC_VERSION_OUTPUT}")
 
-# Messages for usage instructions
+# Print CUDA architecture
+message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+
+
+
+
 message(STATUS "--------------------------------------------------------------------")
-message(STATUS "Usage of cuEFIM:")
+message(STATUS "cuEFIM:")
 message(STATUS "--------------------------------------------------------------------")
-message(STATUS "./cuEFIM -h or ./cuEFIM --help")
-message(STATUS "./cuEFIM -f /datasets/accidents_utility_spmf.txt -o /dev/stdout \\")
-message(STATUS "          -s \\s -m 150000000 -p 128 -q 32 -M hash_table_shared_memory \\")
-message(STATUS "          -P CPU -G Device")
+message(STATUS "To compile, run:")
+message(STATUS "  make -j$(nproc)")
 message(STATUS "--------------------------------------------------------------------")
+message(STATUS "Usage Instructions for cuEFIM:")
+message(STATUS "--------------------------------------------------------------------")
+message(STATUS "To display help:")
+message(STATUS "  ./cuEFIM -h")
+message(STATUS "  ./cuEFIM --help")
 message(STATUS "")
+message(STATUS "To run cuEFIM:")
+message(STATUS " \n ./cuEFIM --input-file /datasets/accidents_utility_spmf.txt --output-file /dev/stdout --separator \\s --min-utility 50000000 --page-size 128 --queue-depth 32 --read-method CPU --memory Device --method hash_table_shared_memory")
+message(STATUS "--------------------------------------------------------------------")
+

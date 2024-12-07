@@ -1,5 +1,38 @@
 #include "mine.cuh"
 
+
+// void mine(database &db, std::unordered_map<uint32_t, uint32_t> &subtree_utility, 
+//             std::unordered_map<uint32_t, uint32_t> &rank, params &p, results &r)
+// {
+//     workload w;
+
+//     std::vector<uint32_t> primary;
+//     for (auto &item : subtree_utility)
+//     {
+//         if (item.second >= p.min_utility)
+//         {
+//             primary.push_back(item.first);
+//         }
+//     }
+
+//     w.primary_size = 1;
+//     w.primary_count = primary.size();
+//     w.secondary_size = rank.size() + 1;
+
+//     // allocate
+//     w.d_primary = CudaMemory<uint32_t>(primary.size(), p.GPU_memory_allocation);
+//     w.d_secondary_ref = CudaMemory<uint32_t>(primary.size(), p.GPU_memory_allocation);
+//     w.d_secondary = CudaMemory<uint32_t>(w.secondary_size, p.GPU_memory_allocation);
+    
+//     // copy primary and memset secondary to 1
+//     cudaMemcpy(w.d_primary.ptr(), primary.data(), primary.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
+//     cudaMemset(w.d_secondary.ptr(), 1, w.secondary_size * sizeof(uint32_t));
+//     cudaMemset(w.d_secondary_ref.ptr(), 0, primary.size() * sizeof(uint32_t));
+
+
+
+// }
+
 // extern __shared__ key_value shared_memory[];
 // __global__ void searchGPU_shared_mem_k_v(database *d_db, uint32_t *transaction_hits, uint32_t transactions_count,
 //                                          uint32_t *candidates, uint32_t number_of_candidates, uint32_t candidate_size,

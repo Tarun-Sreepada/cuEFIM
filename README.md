@@ -15,7 +15,9 @@
 2. **Create compile environment...**
     ```bash 
     mkdir build && cd build
+    # debug build
     cmake .. -DCMAKE_BUILD_TYPE=Debug
+    # release build
     cmake .. -DCMAKE_BUILD_TYPE=Release
 
 3. **Compile**
@@ -28,6 +30,8 @@
 
 **Example**
 ```bash
-./cuEFIM -f ../datasets/accidents_utility_spmf.txt -o /dev/stdout \
-        -s \s -m 150000000 -p 128 -q 32 -M hash_table_shared_memory \
-        -P CPU -G Device
+./cuEFIM --input-file /datasets/accidents_utility_spmf.txt --output-file /dev/stdout \
+    --separator \s --min-utility 50000000 --page-size 128 --queue-depth 32 \
+        --read-method CPU --memory Device --method hash_table_shared_memory
+
+#./cuEFIM -f ../datasets/accidents_utility_spmf.txt -o /dev/stdour -s \\s -m 150000000 -p 128 -q 32 -M hash_table_shared_memory -P CPU -G Device --page_size=32

@@ -2,13 +2,12 @@
 #define KIBIBYTE 1024ULL
 #define KILOBYTE 1000ULL
 
-#ifdef __CUDACC__
-#include <cuda_runtime.h> // Only include CUDA headers when using nvcc
-#endif
+#include <cuda_runtime.h> // For cudaError_t / cudaMemGetInfo
 
 #include <iostream> // For cout
 #include <string>
 #include <vector> 
+#include <map>
 #include <unordered_map> 
 #include <cstdint> // For uint32_t
 #include <liburing.h> // For io_uring / file io
@@ -24,84 +23,54 @@
 #include <iomanip> // For setprecision
 
 
-
-enum class gpu_memory_allocation
-{
-    Device,
-    Unified
-};
-
-
-enum class mine_method
-{
-    no_hash_table,
-    no_hash_table_shared_memory,
-    hash_table,
-    hash_table_shared_memory,
-};
-
-
-enum class file_read_parse_method
-{
-    CPU,
-    GPU
-};
-
-
-struct params
-{
-    std::string input_file;
-    std::string output_file;
-    std::string separator; // TODO: set default to /dev/stdout
-
-    char separator_char = ',';
-
-    uint32_t min_utility = 0;
-
-    size_t page_size = 128 * KIBIBYTE;
-    size_t queue_depth = 512;
-
-    file_read_parse_method parse_method = file_read_parse_method::CPU;
-    gpu_memory_allocation GPU_memory_allocation = gpu_memory_allocation::Device;
-    mine_method method = mine_method::hash_table_shared_memory;
-};
-
-
-/*
-    @brief Print help message
-*/
-
-
 struct results
 {
-    std::chrono::time_point<std::chrono::high_resolution_clock> start_time;
-    std::chrono::time_point<std::chrono::high_resolution_clock> file_read_time; // SSD -> RAM
-    std::chrono::time_point<std::chrono::high_resolution_clock> parse_time; // RAM -> Structure
-    std::chrono::time_point<std::chrono::high_resolution_clock> end_time;
 
-    uint32_t total_patterns;
-
-    uint32_t gpu_memory_consumption_before_starting;
-    std::vector<uint32_t> intermediate_gpu_memory_consumption;
-    uint32_t total_gpu_memory_consumption;
-
-    uint32_t cpu_memory_consumption;
-
-    uint32_t total_memory_consumption; // CPU + GPU
-};
-
-// Hash function for vectors
-struct VectorHash
-{
-    uint32_t operator()(const std::vector<uint32_t> &v) const
-    {
-        std::hash<uint32_t> hasher;
-        uint32_t seed = 0;
-        for (uint32_t i : v)
-        {
-            seed ^= hasher(i) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+    uint32_t get_cuda_memory_usage() {
+        size_t free_mem, total_mem;
+        cudaError_t err = cudaMemGetInfo(&free_mem, &total_mem);
+        
+        if (err != cudaSuccess) {
+            std::cout << "Error: " << cudaGetErrorString(err) << std::endl;
         }
-        return seed;
-    }
-};
 
+        // Return used memory (total - free) in bytes
+        return static_cast<uint32_t>(total_mem - free_mem);
+    }
+
+    std::vector<
+        std::pair<std::string, 
+            std::tuple<
+                std::chrono::time_point<std::chrono::high_resolution_clock>, uint32_t, uint32_t>>> memory_usage;
+
+    // Function to record RSS and CUDA memory usage with a custom label
+    void record_memory_usage(const std::string& label) {
+        auto now = std::chrono::high_resolution_clock::now();
+        uint32_t rss = get_rss_memory_usage();
+        uint32_t cuda_mem = get_cuda_memory_usage();
+        memory_usage.emplace_back(label, std::make_tuple(now, rss, cuda_mem));
+    }
+
+private:
+    // Helper function to retrieve RSS memory usage
+    uint32_t get_rss_memory_usage() {
+        std::ifstream stat_file("/proc/self/statm"); // Linux-specific
+        if (!stat_file.is_open()) {
+            return 0; // Unable to read RSS
+        }
+
+        std::string line;
+        std::getline(stat_file, line);
+        std::istringstream iss(line);
+
+        uint32_t pages;
+        iss >> pages; // Skip virtual memory size
+        iss >> pages; // Resident Set Size in pages
+
+        stat_file.close();
+
+        // Convert pages to bytes
+        return pages * sysconf(_SC_PAGESIZE);
+    }
+
+};
