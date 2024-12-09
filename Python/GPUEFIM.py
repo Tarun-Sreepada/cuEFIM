@@ -494,7 +494,7 @@ if __name__ == "__main__":
     # minUtil = 19000000
 
     # inputFile = '/home/tarun/cudaEFIM/datasets/chainstore.txt'
-    # minUtil = 5000000
+    # minUtil = 200000
 
     inputFile = '/home/tarun/cudaEFIM/datasets/values.txt'
     minUtil = 30
