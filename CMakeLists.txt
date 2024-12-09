@@ -1,89 +1,52 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.20)
 project(cuEFIM LANGUAGES CXX CUDA)
 
-# Set the C++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Enable CUDA compilation with separable compilation
-set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
-
-# Set build type
+# Set build type to Debug by default
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Debug) # Default to Debug mode
+    set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-# Set optimization and debugging flags
-set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3")
-set(CMAKE_CUDA_FLAGS_DEBUG "-O0 -g")
-set(CMAKE_CUDA_FLAGS_RELEASE "-O3")
+set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+set(CMAKE_CUDA_ARCHITECTURES "75;80")
 
-# Add a DEBUG define for Debug builds
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_definitions(DEBUG)
-endif()
-
-# Enable memory sanitization for C++ (host) code in Debug mode
-if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fsanitize=address")
-endif()
-
-# Auto-detect CUDA architectures
-if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES native) # Adjust for your target architectures
-endif()
-
-# Include directories
-include_directories(include)
-include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}) # Include CUDA headers
-
-# Collect source files
-file(GLOB_RECURSE SRC_CPP_FILES src/*.cpp) # Collect all .cpp files
-file(GLOB_RECURSE SRC_CU_FILES src/*.cu)   # Collect all .cu files
-
-# Find and link liburing
+include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES} ${CMAKE_SOURCE_DIR}/include)
 find_library(LIBURING_LIB NAMES uring REQUIRED)
-if(NOT LIBURING_LIB)
-    message(FATAL_ERROR "liburing not found. Please ensure it is installed and accessible.")
-endif()
-
 find_path(LIBURING_INCLUDE_DIR NAMES liburing.h REQUIRED)
-if(NOT LIBURING_INCLUDE_DIR)
-    message(FATAL_ERROR "liburing.h not found. Please ensure it is installed and accessible.")
-endif()
-
 include_directories(${LIBURING_INCLUDE_DIR})
 
-# Add the executable
-add_executable(cuEFIM
-    main.cu   # Entry point
-    ${SRC_CPP_FILES} # All .cpp files
-    ${SRC_CU_FILES}  # All .cu files
-)
+file(GLOB_RECURSE SRC_CPP_FILES src/*.cpp)
+file(GLOB_RECURSE SRC_CU_FILES src/*.cu)
 
-# Set properties for the target
+# Define the CUDA executable
+add_executable(cuEFIM ${SRC_CPP_FILES} ${SRC_CU_FILES} main.cu)
+
+# Set properties to specify CUDA-specific flags
 set_target_properties(cuEFIM PROPERTIES
     CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
     CUDA_SEPARABLE_COMPILATION ON
 )
 
-# Link liburing and CUDA runtime
-target_link_libraries(cuEFIM PRIVATE ${LIBURING_LIB} cuda)
+# Set custom flags for Debug and Release
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "DEBUG" OR CMAKE_BUILD_TYPE STREQUAL "debug")
+    message(STATUS "Building in Debug mode")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O0 -g")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O0 -G -g")
+    target_compile_definitions(cuEFIM PRIVATE DEBUG) # Define DEBUG only in Debug mode
+else()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3")
+endif()
 
-# Print nvcc version
-message(STATUS "Querying nvcc version...")
-execute_process(
-    COMMAND ${CMAKE_CUDA_COMPILER} --version
-    OUTPUT_VARIABLE NVCC_VERSION_OUTPUT
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-message(STATUS "nvcc version:\n${NVCC_VERSION_OUTPUT}")
-
-# Print CUDA architecture
-message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+# Link necessary libraries
+target_link_libraries(cuEFIM PRIVATE ${LIBURING_LIB} cuda cudart)
 
 
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "CXX Flags: ${CMAKE_CXX_FLAGS}")
+message(STATUS "CUDA Flags: ${CMAKE_CUDA_FLAGS}")
 
 
 message(STATUS "--------------------------------------------------------------------")

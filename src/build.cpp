@@ -1,5 +1,97 @@
 #include "build.hpp"
 
+build_file build_cpu(parsed_file &pf, results &r, Config::Params &p)
+{
+    build_file bf;
+
+    // make ordered twu in descending order unless less tha minutil then break
+    for (const auto &item : pf.twu)
+    {
+        if (item.second < p.min_utility)
+        {
+            continue;
+        }
+        bf.ordered_twu[item.first] = item.second;
+    }
+
+    // sort twu in descending order
+    bf.ordered_twu_vector = std::vector<std::pair<uint32_t, uint32_t>>(bf.ordered_twu.begin(), bf.ordered_twu.end());
+    std::sort(bf.ordered_twu_vector.begin(), bf.ordered_twu_vector.end(),
+              [](const std::pair<uint32_t, uint32_t> &a, const std::pair<uint32_t, uint32_t> &b) {
+                  return a.second < b.second;
+              });
+
+    // create item to itemID mapping start from 1
+    uint32_t itemID = 1;
+    for (const auto &item : bf.ordered_twu)
+    {
+        bf.item_to_itemID[item.first] = itemID;
+        bf.itemID_to_item[itemID] = item.first;
+        itemID++;
+    }
+
+    // create transactions
+    for (const auto &transaction : pf.key_value_pairs)
+    {
+        // take key in transaction, if key in ordered twu then add to transaction
+        std::vector<std::pair<uint32_t, uint32_t>> temp;
+        for (size_t i = 0; i < transaction.first.size(); i++)
+        {
+            if (bf.ordered_twu.find(transaction.first[i]) != bf.ordered_twu.end())
+            {
+                // new_keys.push_back(bf.item_to_itemID[transaction.first[i]]);
+                // new_values.push_back(transaction.second[i]);
+                temp.push_back(std::make_pair(bf.item_to_itemID[transaction.first[i]], transaction.second[i]));
+            }
+        }
+
+        if (temp.empty())
+        {
+            continue;
+        }
+
+        uint32_t total_value = std::accumulate(temp.begin(), temp.end(), 0,
+                                               [](uint32_t sum, const std::pair<uint32_t, uint32_t> &a) {
+                                                   return sum + a.second;
+                                               });
+
+        // sort the keys and values in ascending order
+        std::sort(temp.begin(), temp.end(),
+                  [](const std::pair<uint32_t, uint32_t> &a, const std::pair<uint32_t, uint32_t> &b) {
+                      return a.first < b.first;
+                  });
+
+        uint32_t temp_val = 0;
+
+        std::vector<uint32_t> new_keys;
+        std::vector<uint32_t> new_values;
+        for (size_t i = 0; i < temp.size(); i++)
+        {
+            new_keys.push_back(temp[i].first);
+            new_values.push_back(temp[i].second);
+            bf.subtree_utility[temp[i].first] += total_value - temp_val;
+            temp_val += temp[i].second;
+        }
+
+
+        // if transaction not in transactions then add else add values to existing transaction
+        if (bf.transactions.find(new_keys) == bf.transactions.end())
+        {
+            bf.transactions[new_keys] = new_values;
+        }
+        else
+        {
+            for (size_t i = 0; i < new_keys.size(); i++)
+            {
+                bf.transactions[new_keys][i] += new_values[i];
+            }
+        }
+    }
+    r.record_memory_usage("Build");
+
+    return std::move(bf);
+}
+
 
 // // Define a utility function to sort the TWU vector and create item ranking
 // std::unordered_map<uint32_t, uint32_t> create_item_ranking(const std::unordered_map<uint32_t, uint32_t> &twu)

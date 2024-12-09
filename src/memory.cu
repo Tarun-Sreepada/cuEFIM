@@ -1,4 +1,4 @@
-#include "memory.cuh"
+// #include "memory.cuh"
 
 // void MemoryUtils::getMemoryInfo(size_t &freeMemory, size_t &usedMemory) {
 //     size_t totalMemory;

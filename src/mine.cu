@@ -1,39 +1,151 @@
 #include "mine.cuh"
 
+__device__ uint32_t pcg_hash(uint32_t input)
+{
+    uint32_t state = input * 747796405u + 2891336453u;
+    uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
 
-// void mine(database &db, std::unordered_map<uint32_t, uint32_t> &subtree_utility, 
-//             std::unordered_map<uint32_t, uint32_t> &rank, params &p, results &r)
-// {
-//     workload w;
+// Hash function
+__device__ uint32_t hashFunction(uint32_t key, uint32_t tableSize)
+{
+    return pcg_hash(key) % tableSize;
+}
 
-//     std::vector<uint32_t> primary;
-//     for (auto &item : subtree_utility)
-//     {
-//         if (item.second >= p.min_utility)
-//         {
-//             primary.push_back(item.first);
+// // Device function to query an item in the hash table
+// __device__ int64_t query_item(key_value *item_index, uint32_t start_search, uint32_t end_search, uint32_t item) {
+
+//     uint32_t tableSize = end_search - start_search;
+
+//     uint32_t hashIdx = hashFunction(item, tableSize);
+
+//     while (true) {
+//         if (item_index[hashIdx + start_search].key == 0) {
+//             return -1; // Item not found
 //         }
+//         if (item_index[hashIdx + start_search].key == item) {
+//             return item_index[hashIdx + start_search].value;
+//         }
+//         // Handle collisions (linear probing)
+//         hashIdx = (hashIdx + 1) % tableSize;
 //     }
-
-//     w.primary_size = 1;
-//     w.primary_count = primary.size();
-//     w.secondary_size = rank.size() + 1;
-
-//     // allocate
-//     w.d_primary = CudaMemory<uint32_t>(primary.size(), p.GPU_memory_allocation);
-//     w.d_secondary_ref = CudaMemory<uint32_t>(primary.size(), p.GPU_memory_allocation);
-//     w.d_secondary = CudaMemory<uint32_t>(w.secondary_size, p.GPU_memory_allocation);
-    
-//     // copy primary and memset secondary to 1
-//     cudaMemcpy(w.d_primary.ptr(), primary.data(), primary.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
-//     cudaMemset(w.d_secondary.ptr(), 1, w.secondary_size * sizeof(uint32_t));
-//     cudaMemset(w.d_secondary_ref.ptr(), 0, primary.size() * sizeof(uint32_t));
-
-
-
 // }
 
-// extern __shared__ key_value shared_memory[];
+
+__global__ void print_database(d_database *d_db)
+{
+    printf("Primary Size: %u\n", d_db->primary_size);
+    printf("Secondary Size: %u\n", d_db->secondary_size);
+    printf("Largest Transaction Size: %u\n", d_db->largest_transaction_size);
+    printf("Load Factor: %u\n", d_db->load_factor);
+
+    printf("Primary: ");
+    for (int i = 0; i < d_db->primary_size; i++)
+    {
+        printf("%ld ", d_db->primary.ptr()[i]);
+    }
+    printf("\n");
+
+    printf("Secondary: ");
+    for (int i = 0; i < d_db->secondary_size; i++)
+    {
+        printf("%ld ", d_db->secondary.ptr()[i]);
+    }
+
+    printf("\n");
+
+    // print transactions
+    for (int i = 0; i < d_db->transaction_count; i++)
+    {
+        for (int j = d_db->d_csr_transaction_start.ptr()[i]; j < d_db->d_csr_transaction_end.ptr()[i]; j++)
+        {
+            printf("%u:%u ", d_db->d_compressed_spare_row_db.ptr()[j].key, d_db->d_compressed_spare_row_db.ptr()[j].value);
+        }
+        printf("\n");
+    }
+
+    // print hashed transactions
+    for (int i = 0; i < d_db->transaction_count; i++)
+    {
+        for (int j = d_db->d_csr_transaction_start.ptr()[i] * d_db->load_factor; j < d_db->d_csr_transaction_end.ptr()[i] * d_db->load_factor; j++)
+        {
+            // printf("%u:%u ", d_db->d_compressed_spare_row_db.ptr()[j].key, d_db->d_compressed_spare_row_db.ptr()[j].value);
+            printf("%u:%u ", d_db->d_hashed_csr_db.ptr()[j].key, d_db->d_hashed_csr_db.ptr()[j].value);
+        }
+        printf("\n");
+    }
+}
+
+
+// Kernel to insert transactions into the hash table
+__global__ void hash_transactions(d_database *d_db)
+
+{
+
+    printf("Primary Size: %u\n", d_db->primary_size);
+    printf("Secondary Size: %u\n", d_db->secondary_size);
+    printf("Largest Transaction Size: %u\n", d_db->largest_transaction_size);
+    printf("Load Factor: %u\n", d_db->load_factor);
+    printf("Start: %u\tEnd: %u\n", d_db->d_csr_transaction_start.ptr()[0], d_db->d_csr_transaction_end.ptr()[1]);
+
+    uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= d_db->transaction_count)
+    {
+        return;
+    }
+    printf("TID: %u\n", tid);
+    printf("Start: %u\tEnd: %u\n", d_db->d_csr_transaction_start.ptr()[tid], d_db->d_csr_transaction_end.ptr()[tid]);
+
+    uint32_t bucket_size = (d_db->d_csr_transaction_start.ptr()[tid] - d_db->d_csr_transaction_end.ptr()[tid]) * d_db->load_factor;
+    uint32_t item_index_insert_start = d_db->d_csr_transaction_start.ptr()[tid] * d_db->load_factor;
+    printf("Bucket Size: %u\tLoad Factor: %u\n", bucket_size, d_db->load_factor);
+    printf("Item Index Insert Start: %u\n", item_index_insert_start);
+
+    for (int i = d_db->d_csr_transaction_start.ptr()[tid]; i < d_db->d_csr_transaction_end.ptr()[tid]; i++)
+    {
+        uint32_t item = d_db->d_compressed_spare_row_db.ptr()[i].key;
+        uint32_t hashIdx = hashFunction(item, bucket_size);
+
+        // d_db->d_hashed_csr_db.ptr()
+        while (true)
+        {
+            if (d_db->d_hashed_csr_db.ptr()[hashIdx + item_index_insert_start].key == 0)
+            {
+                d_db->d_hashed_csr_db.ptr()[hashIdx + item_index_insert_start].key = item;
+                d_db->d_hashed_csr_db.ptr()[hashIdx + item_index_insert_start].value = i;
+                break;
+            }
+            // Handle collisions (linear probing)
+            hashIdx = (hashIdx + 1) % (bucket_size);
+        }
+    }
+}
+
+
+void mine(CudaMemory<d_database> &db, results &r, Config::Params &p)
+{
+#ifdef DEBUG
+    std::cout << "Mining" << std::endl;
+#endif
+
+    // d_database d_db = db; // just to copy the pointers over to the GPU so we can avoid the CPU-GPU communication
+
+   
+    dim3 block(1);
+    dim3 grid(1);
+
+    print_database<<<grid, block>>>(d_db);
+    gpuErrchk(cudaPeekAtLastError());
+    gpuErrchk(cudaDeviceSynchronize());
+
+
+    hash_transactions<<<grid, block>>>(d_db);
+    gpuErrchk(cudaPeekAtLastError());
+    gpuErrchk(cudaDeviceSynchronize());
+    r.record_memory_usage("Hashed DB");
+}
+
 // __global__ void searchGPU_shared_mem_k_v(database *d_db, uint32_t *transaction_hits, uint32_t transactions_count,
 //                                          uint32_t *candidates, uint32_t number_of_candidates, uint32_t candidate_size,
 //                                          uint32_t *secondary, uint32_t secondary_size,
@@ -118,6 +230,36 @@
 //     }
 // }
 
+// void mine(database &db, std::unordered_map<uint32_t, uint32_t> &subtree_utility,
+//             std::unordered_map<uint32_t, uint32_t> &rank, params &p, results &r)
+// {
+//     workload w;
+
+//     std::vector<uint32_t> primary;
+//     for (auto &item : subtree_utility)
+//     {
+//         if (item.second >= p.min_utility)
+//         {
+//             primary.push_back(item.first);
+//         }
+//     }
+
+//     w.primary_size = 1;
+//     w.primary_count = primary.size();
+//     w.secondary_size = rank.size() + 1;
+
+//     // allocate
+//     w.d_primary = CudaMemory<uint32_t>(primary.size(), p.GPU_memory_allocation);
+//     w.d_secondary_ref = CudaMemory<uint32_t>(primary.size(), p.GPU_memory_allocation);
+//     w.d_secondary = CudaMemory<uint32_t>(w.secondary_size, p.GPU_memory_allocation);
+
+//     // copy primary and memset secondary to 1
+//     cudaMemcpy(w.d_primary.ptr(), primary.data(), primary.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
+//     cudaMemset(w.d_secondary.ptr(), 1, w.secondary_size * sizeof(uint32_t));
+//     cudaMemset(w.d_secondary_ref.ptr(), 0, primary.size() * sizeof(uint32_t));
+
+// }
+
 // __global__ void clean_subtree_local_utility(uint32_t number_of_candidates, uint32_t *number_of_new_candidates_per_candidate,
 //                                             uint32_t *subtree_utility, uint32_t *local_utility, uint32_t secondary_size, uint32_t minimum_utility)
 // {
@@ -148,7 +290,6 @@
 //     }
 //     return;
 // }
-
 
 // __global__ void create_new_candidates(uint32_t *candidates, uint32_t *candidate_subtree_utility, uint32_t number_of_candidates,
 //                                       uint32_t *new_candidates, uint32_t *new_secondary_reference, uint32_t secondary_size, uint32_t candidate_size,
@@ -188,7 +329,6 @@
 //     return;
 // }
 
-
 // void print_used_gpu_memory() {
 //     size_t free_mem, total_mem;
 //     cudaError_t err = cudaMemGetInfo(&free_mem, &total_mem);
@@ -200,7 +340,6 @@
 
 //     std::cout << "Used GPU memory: " << (total_mem - free_mem) / 1024.0 / 1024.0 << " MB" << std::endl;
 // }
-
 
 // // Define necessary structures and functions (assuming they are defined elsewhere)
 // // For example: params, pattern, key_value, database, gpuErrchk, hash_transactions,
@@ -545,7 +684,6 @@
 //               << std::chrono::duration_cast<std::chrono::milliseconds>(
 //                      std::chrono::high_resolution_clock::now() - start).count()
 //               << "ms" << std::endl;
-
 
 //     // Clean up GPU memory
 //     free_gpu_memory(d_db);
