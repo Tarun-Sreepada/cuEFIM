@@ -34,10 +34,10 @@ __global__ void print_key_value(key_value *array, uint32_t size)
 
 __global__ void print_db(gpu_db *d_db)
 {
-    printf("Transaction Count: %u\n", d_db->transaction_count);
-    printf("Total Items: %u\n", d_db->total_items);
-    printf("Max Transaction Size: %u\n", d_db->max_transaction_size);
-    printf("Load Factor: %u\n", d_db->load_factor);
+    printf("Transaction Count: %lu\n", d_db->transaction_count);
+    printf("Total Items: %lu\n", d_db->total_items);
+    printf("Max Transaction Size: %lu\n", d_db->max_transaction_size);
+    printf("Load Factor: %lu\n", d_db->load_factor);
 
     for (int i = 0; i < d_db->transaction_count; i++)
     {
@@ -62,10 +62,8 @@ __global__ void hash_transactions(gpu_db *d_db)
     {
         return;
     }
-    uint32_t start = d_db->csr_transaction_start.ptr()[tid];
-    uint32_t end = d_db->csr_transaction_end.ptr()[tid];
-    uint32_t bucket_size = (end - start) * d_db->load_factor;
-    uint32_t item_index_insert_start = start * d_db->load_factor;
+    uint32_t bucket_size = (d_db->csr_transaction_end.ptr()[tid] - d_db->csr_transaction_start.ptr()[tid]) * d_db->load_factor;
+    uint32_t item_index_insert_start = d_db->csr_transaction_start.ptr()[tid] * d_db->load_factor;
 
     for (int i = d_db->csr_transaction_start.ptr()[tid]; i < d_db->csr_transaction_end.ptr()[tid]; i++)
     {
@@ -119,10 +117,174 @@ __device__ int64_t query_item(key_value *item_index, uint32_t start_search, uint
     }
 }
 
+__global__ void no_hash_table(gpu_db *d_db, workload *w)
+{
+    
+}
+
+__global__ void no_hash_table_shared_mem(gpu_db *d_db, workload *w)
+{
+    
+}
+
+__global__ void hash_table(gpu_db *d_db, workload *w)
+{
+    
+}
+
+
+extern __shared__ key_value shared_memory[];
+__global__ void hash_table_shared_mem(gpu_db *d_db, workload *w)
+{
+    uint32_t block_id = blockIdx.x + blockIdx.y * gridDim.x;
+    uint32_t thread_id = threadIdx.x;
+
+    if (block_id >= d_db->transaction_count || d_db->transaction_hits.ptr()[block_id] == 0)
+    {
+        return;
+    }
+
+    d_db->transaction_hits.ptr()[block_id] = 0;
+    
+    uint32_t transaction_start = d_db->csr_transaction_start.ptr()[block_id];
+    uint32_t transaction_end = d_db->csr_transaction_end.ptr()[block_id];
+    uint32_t transaction_length = transaction_end - transaction_start;
+
+    for (uint32_t i = thread_id; i < transaction_length * d_db->load_factor; i += blockDim.x)
+    {
+        shared_memory[i].key = d_db->transaction_hash_db.ptr()[transaction_start * d_db->load_factor + i].key;
+        shared_memory[i].value = d_db->transaction_hash_db.ptr()[transaction_start * d_db->load_factor + i].value;
+    }
+
+    __syncthreads();
+
+    for (uint32_t i = thread_id; i < w->number_of_primaries; i += blockDim.x)
+    {
+        uint32_t curr_cand_util = 0;
+        uint32_t curr_cand_hits = 0;
+        int32_t location = -1;
+
+        for (uint32_t j = 0; j < w->primary_size; j++)
+        {
+            uint32_t candidate = w->primary.ptr()[i * w->primary_size + j];
+            location = query_item(shared_memory, 0, transaction_length * d_db->load_factor, candidate);
+            if (location != -1)
+            {
+                curr_cand_hits++;
+                curr_cand_util += d_db->compressed_spare_row_db.ptr()[location].value;
+            } else break;
+        }
+        if (curr_cand_hits != w->primary_size)
+        {
+            continue;
+        }
+
+        d_db->transaction_hits.ptr()[block_id] = 1;
+        atomicAdd(&w->primary_utility.ptr()[i], curr_cand_util);
+
+        // calculate the TWU
+        uint32_t ref = w->secondary_reference.ptr()[i];
+        uint32_t secondary_index_start = w->number_of_secondaries * ref;
+
+        // collect all utilities
+        for (uint32_t j = location + 1; j < transaction_end; j++)
+        {
+            uint32_t item = d_db->compressed_spare_row_db.ptr()[j].key;
+            if (w->secondary.ptr()[secondary_index_start + item]) // if the item is valid secondary
+            {
+                curr_cand_util += d_db->compressed_spare_row_db.ptr()[j].value;
+            }
+        }
+
+        uint32_t temp = 0;
+
+        uint32_t subtree_local_insert_location = i * w->number_of_secondaries;
+
+        for (uint32_t j = location + 1; j < transaction_end; j++)
+        {
+            uint32_t item = d_db->compressed_spare_row_db.ptr()[j].key;
+            if (w->secondary.ptr()[secondary_index_start + item]) // if the item is valid secondary
+            {
+                atomicAdd(&w->local_utility.ptr()[subtree_local_insert_location + item], curr_cand_util);
+                atomicAdd(&w->subtree_utility.ptr()[subtree_local_insert_location + item], curr_cand_util - temp);
+                temp += d_db->compressed_spare_row_db.ptr()[j].value;
+            }
+        }
+    }
+
+}
+
+__global__ void clean_subtree_local_utility(gpu_db *db, workload *w, uint32_t minimum_utility)
+{
+    uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid >= w->number_of_primaries)
+    {
+        return;
+    }
+
+    uint32_t subtree_local_insert_location = tid * w->number_of_secondaries;
+
+    for (uint32_t i = 0; i < w->number_of_secondaries; i++)
+    {
+        if (w->subtree_utility.ptr()[subtree_local_insert_location + i] >= minimum_utility)
+        {
+            w->subtree_utility.ptr()[subtree_local_insert_location + i] = i;
+            w->number_of_new_candidates_per_candidate.ptr()[tid + 1]++;
+        }
+        else
+        {
+            w->subtree_utility.ptr()[subtree_local_insert_location + i] = 0;
+        }
+        if (w->local_utility.ptr()[subtree_local_insert_location + i] >= minimum_utility)
+        {
+            w->local_utility.ptr()[subtree_local_insert_location + i] = i;
+        }
+        else
+        {
+            w->local_utility.ptr()[subtree_local_insert_location + i] = 0;
+        }
+    }
+}
+
+__global__ void create_new_candidates(workload *w)
+{
+    uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid >= w->number_of_primaries)
+    {
+        return;
+    }
+
+    // if no new candidates
+    if (w->number_of_new_candidates_per_candidate.ptr()[tid] == w->number_of_new_candidates_per_candidate.ptr()[tid + 1])
+    {
+        return;
+    }
+
+    uint32_t counter = w->primary_size * w->number_of_new_candidates_per_candidate.ptr()[tid];
+    uint32_t refStart = w->number_of_new_candidates_per_candidate.ptr()[tid];
+
+    for (uint32_t i = tid * w->number_of_secondaries; i < (tid + 1) * w->number_of_secondaries; i++)
+    {
+        if (w->subtree_utility.ptr()[i])
+        {
+            for (uint32_t j = tid * (w->primary_size - 1); j < (tid + 1) * (w->primary_size - 1); j++)
+            {
+                w->new_primaries.ptr()[counter] = w->primary.ptr()[j];
+                counter++;
+            }
+            w->new_primaries.ptr()[counter] = w->subtree_utility.ptr()[i];
+            counter++;
+            w->new_secondary_reference.ptr()[refStart] = tid;
+            refStart++;
+        }
+    }
+
+    return;
+
+}
 
 void mine(build_file &bf, results &r, Config::Params &p)
 {
-    std::cout << "Mining" << std::endl;
 
     gpu_db *d_db;
     cudaMallocManaged(&d_db, sizeof(gpu_db));
@@ -179,9 +341,13 @@ void mine(build_file &bf, results &r, Config::Params &p)
     cudaMallocManaged(&w, sizeof(workload));
 
     w->primary = CudaMemory<uint32_t>(bf.primary, p.GPU_memory_allocation);
-    w->secondary = CudaMemory<uint32_t>(bf.secondary, p.GPU_memory_allocation);
     w->number_of_primaries = bf.primary.size();
     w->primary_size = 1;
+    
+    w->secondary_reference = CudaMemory<uint32_t>(bf.primary.size(), p.GPU_memory_allocation);
+    cudaMemset(w->secondary_reference.ptr(), 0, bf.primary.size() * sizeof(uint32_t));
+
+    w->secondary = CudaMemory<uint32_t>(bf.secondary, p.GPU_memory_allocation);
     w->number_of_secondaries = bf.secondary.size();
 
     grid = dim3(d_db->transaction_count); 
@@ -189,401 +355,149 @@ void mine(build_file &bf, results &r, Config::Params &p)
 
     while (w->number_of_primaries)
     {
+        std::cout << "Primary size: " << w->primary_size << "\tNumber of primaries: " << w->number_of_primaries << std::endl;
+        r.record_memory_usage("Iter: " + std::to_string(w->primary_size) + "a");
+
         w->primary_utility = CudaMemory<uint32_t>(w->number_of_primaries, p.GPU_memory_allocation);
+        cudaMemset(w->primary_utility.ptr(), 0, w->number_of_primaries * sizeof(uint32_t));
         w->subtree_utility = CudaMemory<uint32_t>(w->number_of_primaries * w->number_of_secondaries, p.GPU_memory_allocation);
+        cudaMemset(w->subtree_utility.ptr(), 0, w->number_of_primaries * w->number_of_secondaries * sizeof(uint32_t));
         w->local_utility = CudaMemory<uint32_t>(w->number_of_primaries * w->number_of_secondaries, p.GPU_memory_allocation);
+        cudaMemset(w->local_utility.ptr(), 0, w->number_of_primaries * w->number_of_secondaries * sizeof(uint32_t));
+
+        r.record_memory_usage("Iter: " + std::to_string(w->primary_size) + "b");
 
         // Call the search kernel
+        grid = dim3(d_db->transaction_count);   
         if (p.method == Config::mine_method::no_hash_table)
         {
-
+            no_hash_table<<<grid, block>>>(d_db, w);
         }
         else if (p.method == Config::mine_method::no_hash_table_shared_memory)
         {
-
+            no_hash_table_shared_mem<<<grid, block>>>(d_db, w);
         }
         else if (p.method == Config::mine_method::hash_table)
         {
-
+            hash_table<<<grid, block>>>(d_db, w);
         }
         else if (p.method == Config::mine_method::hash_table_shared_memory)
         {
+            hash_table_shared_mem<<<grid, block>>>(d_db, w);
+        }
+        gpuErrchk(cudaPeekAtLastError());
+        gpuErrchk(cudaDeviceSynchronize());
 
+        // push the patterns to the vector
+        r.patterns.push_back({w->primary.get(), w->primary_utility.get()});
+
+        #ifdef DEBUG
+        std::vector<uint32_t> primary = w->primary.get();
+        std::vector<uint32_t> primary_utility = w->primary_utility.get();
+        std::vector<uint32_t> subtree_utility = w->subtree_utility.get();
+        std::vector<uint32_t> local_utility = w->local_utility.get();
+
+
+        for (size_t i = 0; i < w->number_of_primaries; i++)
+        {
+            for (size_t j = 0; j < w->primary_size; j++)
+            {
+                std::cout << primary[i * w->primary_size + j] << " ";
+            }
+            std::cout << "#UTIL: " << primary_utility[i] << std::endl;
+            std::cout << "Local utility: " << std::endl;
+            for (size_t j = 0; j < w->number_of_secondaries; j++)
+            {
+                std::cout << local_utility[i * w->number_of_secondaries + j] << " ";
+            }
+            std::cout << std::endl;
+
+            std::cout << "Subtree utility: " << std::endl;
+            for (size_t j = 0; j < w->number_of_secondaries; j++)
+            {
+                std::cout << subtree_utility[i * w->number_of_secondaries + j] << " ";
+            }
+            std::cout << std::endl;
+            std::cout << std::endl;
+        }
+        
+        #endif
+
+
+        // clean up subtree and local utility
+        w->number_of_new_candidates_per_candidate = CudaMemory<uint32_t>(w->number_of_primaries + 1, p.GPU_memory_allocation);
+        cudaMemset(w->number_of_new_candidates_per_candidate.ptr(), 0, (w->number_of_primaries + 1) * sizeof(uint32_t));
+
+        grid = dim3((w->number_of_primaries + p.block_size - 1) / p.block_size);
+        clean_subtree_local_utility<<<grid, block>>>(d_db, w, p.min_utility);
+        gpuErrchk(cudaPeekAtLastError());
+        gpuErrchk(cudaDeviceSynchronize());
+
+        // wrap using thrust 
+        thrust::device_ptr<uint32_t> thrust_n_o_n_p_c = thrust::device_pointer_cast(w->number_of_new_candidates_per_candidate.ptr());
+        w->total_number_new_primaries = thrust::reduce(thrust_n_o_n_p_c, thrust_n_o_n_p_c + w->number_of_primaries + 1);
+
+        #ifdef DEBUG
+        print_array<<<1, 1>>>(w->number_of_new_candidates_per_candidate.ptr(), w->number_of_primaries + 1);
+        gpuErrchk(cudaPeekAtLastError());
+        gpuErrchk(cudaDeviceSynchronize());
+        #endif
+
+        r.record_memory_usage("Iter: " + std::to_string(w->primary_size) + "c");
+
+        if (w->total_number_new_primaries == 0)
+        {
+            break;
         }
 
-        w->number_of_primaries = 0;
+        thrust::inclusive_scan(thrust_n_o_n_p_c, thrust_n_o_n_p_c + w->number_of_primaries + 1, thrust_n_o_n_p_c);
+
+        #ifdef DEBUG
+        print_array<<<1, 1>>>(w->number_of_new_candidates_per_candidate.ptr(), w->number_of_primaries + 1);
+        gpuErrchk(cudaPeekAtLastError());
+        gpuErrchk(cudaDeviceSynchronize());
+        #endif
+
+
+        w->primary_size += 1;
+        w->new_primaries = CudaMemory<uint32_t>(w->total_number_new_primaries * w->primary_size, p.GPU_memory_allocation);
+        w->new_secondary_reference = CudaMemory<uint32_t>(w->total_number_new_primaries, p.GPU_memory_allocation);
+
+        create_new_candidates<<<grid, block>>>(w);
+        gpuErrchk(cudaPeekAtLastError());
+        gpuErrchk(cudaDeviceSynchronize());
+
+        #ifdef DEBUG
+        std::vector<uint32_t> new_primaries = w->new_primaries.get();
+        std::vector<uint32_t> new_secondary_reference = w->new_secondary_reference.get();
+
+        for (size_t i = 0; i < w->total_number_new_primaries; i++)
+        {
+            for (size_t j = 0; j < w->primary_size; j++)
+            {
+                std::cout << new_primaries[i * w->primary_size + j] << " ";
+            }
+            std::cout << "#REF: " << new_secondary_reference[i] << std::endl;
+        }
+        #endif
+
+        r.record_memory_usage("Iter: " + std::to_string(w->primary_size - 1) + "d");
+
+        // move the new primaries to the primary
+        w->primary = std::move(w->new_primaries);
+        w->secondary_reference = std::move(w->new_secondary_reference);
+        w->number_of_primaries = w->total_number_new_primaries;
+        w->secondary = std::move(w->local_utility);
+
+        r.record_memory_usage("Iter: " + std::to_string(w->primary_size - 1) + "e");
+
     }
 
+    // free memory
+    cudaFree(d_db);
+    cudaFree(w);
 
-    // mine_gpu_patterns(p, d_db, bf.primary, bf.secondary, r.frequent_patterns, bf.intToStr, compute_shared_memory_requirement(bf.max_transaction_size));
 }
-
-
-// // Device function to query an item in the hash table
-__device__ int64_t query_item(key_value *item_index, uint32_t start_search, uint32_t end_search, uint32_t item) {
-
-    uint32_t tableSize = end_search - start_search;
-
-    uint32_t hashIdx = hashFunction(item, tableSize);
-
-    while (true) {
-        if (item_index[hashIdx + start_search].key == 0) {
-            return -1; // Item not found
-        }
-        if (item_index[hashIdx + start_search].key == item) {
-            return item_index[hashIdx + start_search].value;
-        }
-        // Handle collisions (linear probing)
-        hashIdx = (hashIdx + 1) % tableSize;
-    }
-}
-
-
-
-// void mine(CudaMemory<d_database> &db, results &r, Config::Params &p)
-// {
-// #ifdef DEBUG
-//     std::cout << "Mining" << std::endl;
-// #endif
-
-//     // d_database d_db = db; // just to copy the pointers over to the GPU so we can avoid the CPU-GPU communication
-
-   
-//     dim3 block(1);
-//     dim3 grid(1);
-
-//     print_database<<<grid, block>>>(d_db);
-//     gpuErrchk(cudaPeekAtLastError());
-//     gpuErrchk(cudaDeviceSynchronize());
-
-
-//     hash_transactions<<<grid, block>>>(d_db);
-//     gpuErrchk(cudaPeekAtLastError());
-//     gpuErrchk(cudaDeviceSynchronize());
-//     r.record_memory_usage("Hashed DB");
-// }
-
-// __global__ void searchGPU_shared_mem_k_v(database *d_db, uint32_t *transaction_hits, uint32_t transactions_count,
-//                                          uint32_t *candidates, uint32_t number_of_candidates, uint32_t candidate_size,
-//                                          uint32_t *secondary, uint32_t secondary_size,
-//                                          uint32_t *secondary_reference,
-//                                          uint32_t *candidate_utility,
-//                                          uint32_t *candidate_subtree_utility,
-//                                          uint32_t *candidate_local_utility)
-// {
-//     uint32_t block_id = blockIdx.x + blockIdx.y * gridDim.x;
-//     uint32_t tid = threadIdx.x;
-//     if (block_id >= transactions_count || transaction_hits[block_id] == 0)
-//     {
-//         return;
-//     }
-//     transaction_hits[block_id] = 0;
-
-//     uint32_t transaction_start = d_db->transaction_start[block_id];
-//     uint32_t transaction_end = d_db->transaction_end[block_id];
-//     uint32_t transaction_length = transaction_end - transaction_start;
-
-//     for (uint32_t i = tid; i < transaction_length * bucket_factor; i += blockDim.x)
-//     {
-//         // shared_memory[i] = d_db->item_index[transaction_start * bucket_factor + i];
-//         shared_memory[i].key = d_db->item_index[transaction_start * bucket_factor + i].key;
-//         shared_memory[i].value = d_db->item_index[transaction_start * bucket_factor + i].value;
-//     }
-
-//     __syncthreads();
-
-//     for (uint32_t i = tid; i < number_of_candidates; i += blockDim.x)
-//     {
-//         uint32_t curr_cand_util = 0;
-//         uint32_t curr_cand_hits = 0;
-//         int32_t location = -1;
-
-//         for (uint32_t j = 0; j < candidate_size; j++)
-//         {
-//             uint32_t candidate = candidates[i * candidate_size + j];
-//             location = query_item(shared_memory, 0, transaction_length * bucket_factor, candidate);
-//             if (location != -1)
-//             {
-//                 curr_cand_hits++;
-//                 curr_cand_util += d_db->item_utility[location].value;
-//             }
-//         }
-//         if (curr_cand_hits != candidate_size)
-//         {
-//             continue;
-//         }
-
-//         transaction_hits[block_id] = 1;
-//         atomicAdd(&candidate_utility[i], curr_cand_util);
-
-//         // calculate the TWU
-//         uint32_t ref = secondary_reference[i];
-//         uint32_t secondary_index_start = secondary_size * ref;
-
-//         // collect all utilities
-//         for (uint32_t j = location + 1; j < transaction_end; j++)
-//         {
-//             uint32_t item = d_db->item_utility[j].key;
-//             if (secondary[secondary_index_start + item]) // if the item is valid secondary
-//             {
-//                 curr_cand_util += d_db->item_utility[j].value;
-//             }
-//         }
-
-//         uint32_t temp = 0;
-
-//         uint32_t subtree_local_insert_location = i * secondary_size;
-
-//         for (uint32_t j = location + 1; j < transaction_end; j++)
-//         {
-//             uint32_t item = d_db->item_utility[j].key;
-//             if (secondary[secondary_index_start + item]) // if the item is valid secondary
-//             {
-//                 atomicAdd(&candidate_local_utility[subtree_local_insert_location + item], curr_cand_util);
-//                 atomicAdd(&candidate_subtree_utility[subtree_local_insert_location + item], curr_cand_util - temp);
-//                 temp += d_db->item_utility[j].value;
-//             }
-//         }
-//     }
-// }
-
-// void mine(database &db, std::unordered_map<uint32_t, uint32_t> &subtree_utility,
-//             std::unordered_map<uint32_t, uint32_t> &rank, params &p, results &r)
-// {
-//     workload w;
-
-//     std::vector<uint32_t> primary;
-//     for (auto &item : subtree_utility)
-//     {
-//         if (item.second >= p.min_utility)
-//         {
-//             primary.push_back(item.first);
-//         }
-//     }
-
-//     w.primary_size = 1;
-//     w.primary_count = primary.size();
-//     w.secondary_size = rank.size() + 1;
-
-//     // allocate
-//     w.d_primary = CudaMemory<uint32_t>(primary.size(), p.GPU_memory_allocation);
-//     w.d_secondary_ref = CudaMemory<uint32_t>(primary.size(), p.GPU_memory_allocation);
-//     w.d_secondary = CudaMemory<uint32_t>(w.secondary_size, p.GPU_memory_allocation);
-
-//     // copy primary and memset secondary to 1
-//     cudaMemcpy(w.d_primary.ptr(), primary.data(), primary.size() * sizeof(uint32_t), cudaMemcpyHostToDevice);
-//     cudaMemset(w.d_secondary.ptr(), 1, w.secondary_size * sizeof(uint32_t));
-//     cudaMemset(w.d_secondary_ref.ptr(), 0, primary.size() * sizeof(uint32_t));
-
-// }
-
-// __global__ void clean_subtree_local_utility(uint32_t number_of_candidates, uint32_t *number_of_new_candidates_per_candidate,
-//                                             uint32_t *subtree_utility, uint32_t *local_utility, uint32_t secondary_size, uint32_t minimum_utility)
-// {
-//     uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-//     if (tid >= number_of_candidates) return;
-
-//     for (uint32_t i = tid * secondary_size; i < (tid + 1) * secondary_size; i++)
-//     {
-//         uint32_t item_value = i - tid * secondary_size;
-
-//         if (subtree_utility[i] >= minimum_utility)
-//         {
-//             subtree_utility[i] = item_value;
-//             number_of_new_candidates_per_candidate[tid + 1]++;
-//         }
-//         else
-//         {
-//             subtree_utility[i] = 0;
-//         }
-//         if (local_utility[i] >= minimum_utility)
-//         {
-//             local_utility[i] = item_value;
-//         }
-//         else
-//         {
-//             local_utility[i] = 0;
-//         }
-//     }
-//     return;
-// }
-
-// __global__ void create_new_candidates(uint32_t *candidates, uint32_t *candidate_subtree_utility, uint32_t number_of_candidates,
-//                                       uint32_t *new_candidates, uint32_t *new_secondary_reference, uint32_t secondary_size, uint32_t candidate_size,
-//                                       uint32_t *number_of_new_candidates_per_candidate)
-// {
-//     uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-//     if (tid >= number_of_candidates)
-//     {
-//         return;
-//     }
-
-//     // if no new candidates
-//     if (number_of_new_candidates_per_candidate[tid] == number_of_new_candidates_per_candidate[tid + 1])
-//     {
-//         return;
-//     }
-
-//     uint32_t counter = candidate_size * number_of_new_candidates_per_candidate[tid];
-//     uint32_t refStart = number_of_new_candidates_per_candidate[tid];
-
-//     for (uint32_t i = tid * secondary_size; i < (tid + 1) * secondary_size; i++)
-//     {
-//         if (candidate_subtree_utility[i])
-//         {
-//             for (uint32_t j = tid * (candidate_size - 1); j < (tid + 1) * (candidate_size - 1); j++)
-//             {
-//                 new_candidates[counter] = candidates[j];
-//                 counter++;
-//             }
-//             new_candidates[counter] = candidate_subtree_utility[i];
-//             counter++;
-//             new_secondary_reference[refStart] = tid;
-//             refStart++;
-//         }
-//     }
-
-//     return;
-// }
-
-// void print_used_gpu_memory() {
-//     size_t free_mem, total_mem;
-//     cudaError_t err = cudaMemGetInfo(&free_mem, &total_mem);
-
-//     if (err != cudaSuccess) {
-//         std::cerr << "CUDA Error: " << cudaGetErrorString(err) << std::endl;
-//         return;
-//     }
-
-//     std::cout << "Used GPU memory: " << (total_mem - free_mem) / 1024.0 / 1024.0 << " MB" << std::endl;
-// }
-
-// // Define necessary structures and functions (assuming they are defined elsewhere)
-// // For example: params, pattern, key_value, database, gpuErrchk, hash_transactions,
-// // searchGPU_shared_mem_k_v, clean_subtree_local_utility, create_new_candidates, etc.
-
-// // Function to prepare transactions
-// void prepare_transactions(const std::unordered_map<std::vector<uint32_t>, std::vector<uint32_t>, VectorHash> &filtered_transactions,
-//                           std::vector<uint32_t> &primary,
-//                           std::vector<uint32_t> &secondary,
-//                           std::vector<uint32_t> &transaction_start,
-//                           std::vector<uint32_t> &transaction_end,
-//                           std::vector<key_value> &item_utility,
-//                           uint32_t &max_transaction_length)
-// {
-//     std::cout << "Number of transactions: " << filtered_transactions.size() << std::endl;
-
-//     secondary.push_back(1); // Add 1 to the secondary list
-//     std::sort(secondary.begin(), secondary.end());
-//     std::sort(primary.begin(), primary.end());
-
-//     max_transaction_length = 0;
-
-//     for (const auto &transaction : filtered_transactions)
-//     {
-//         transaction_start.push_back(static_cast<uint32_t>(item_utility.size()));
-
-//         const std::vector<uint32_t> &items = transaction.first;
-//         const std::vector<uint32_t> &utilities = transaction.second;
-
-//         for (size_t i = 0; i < items.size(); ++i)
-//         {
-//             item_utility.push_back({items[i], utilities[i]});
-//         }
-
-//         transaction_end.push_back(static_cast<uint32_t>(item_utility.size()));
-
-//         max_transaction_length = std::max(max_transaction_length, static_cast<uint32_t>(items.size()));
-//     }
-// }
-
-// // Function to compute shared memory requirement
-// size_t compute_shared_memory_requirement(uint32_t max_transaction_length)
-// {
-//     return max_transaction_length * sizeof(key_value) * bucket_factor;
-// }
-
-// // Function to check shared memory requirement against device capability
-// void check_shared_memory_requirement(size_t shared_memory_requirement)
-// {
-//     int device;
-//     cudaDeviceProp props;
-//     cudaGetDevice(&device);
-//     cudaGetDeviceProperties(&props, device);
-
-//     std::cout << "Shared memory requirement: " << shared_memory_requirement << " bytes" << std::endl;
-//     std::cout << "Max shared memory per block: " << props.sharedMemPerBlock << " bytes" << std::endl;
-
-//     if (shared_memory_requirement > props.sharedMemPerBlock)
-//     {
-//         std::cerr << "Shared memory requirement exceeds the maximum shared memory per block" << std::endl;
-//     }
-// }
-
-// // Function to copy transactions to GPU and calculate memory usage
-// size_t copy_transactions_to_gpu(const std::vector<uint32_t> &transaction_start,
-//                                 const std::vector<uint32_t> &transaction_end,
-//                                 const std::vector<key_value> &item_utility,
-//                                 database *&d_db)
-// {
-//     size_t total_gpu_memory = 0;
-
-//     // Allocate database on GPU
-//     gpuErrchk(cudaMallocManaged(&d_db, sizeof(database)));
-//     total_gpu_memory += sizeof(database);
-
-//     // Allocate and copy transaction start indices
-//     uint32_t *d_transaction_start = nullptr;
-//     gpuErrchk(cudaMallocManaged(&d_transaction_start, transaction_start.size() * sizeof(uint32_t)));
-//     gpuErrchk(cudaMemcpy(d_transaction_start, transaction_start.data(), transaction_start.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
-//     total_gpu_memory += transaction_start.size() * sizeof(uint32_t);
-
-//     // Allocate and copy transaction end indices
-//     uint32_t *d_transaction_end = nullptr;
-//     gpuErrchk(cudaMallocManaged(&d_transaction_end, transaction_end.size() * sizeof(uint32_t)));
-//     gpuErrchk(cudaMemcpy(d_transaction_end, transaction_end.data(), transaction_end.size() * sizeof(uint32_t), cudaMemcpyHostToDevice));
-//     total_gpu_memory += transaction_end.size() * sizeof(uint32_t);
-
-//     // Allocate and copy item utilities
-//     key_value *d_item_utility = nullptr;
-//     gpuErrchk(cudaMallocManaged(&d_item_utility, item_utility.size() * sizeof(key_value)));
-//     gpuErrchk(cudaMemcpy(d_item_utility, item_utility.data(), item_utility.size() * sizeof(key_value), cudaMemcpyHostToDevice));
-//     total_gpu_memory += item_utility.size() * sizeof(key_value);
-
-//     // Allocate item index (size depends on bucket_factor)
-//     key_value *d_item_index = nullptr;
-//     gpuErrchk(cudaMallocManaged(&d_item_index, item_utility.size() * bucket_factor * sizeof(key_value)));
-//     gpuErrchk(cudaMemset(d_item_index, 0, item_utility.size() * bucket_factor * sizeof(key_value)));
-//     total_gpu_memory += item_utility.size() * bucket_factor * sizeof(key_value);
-
-//     // Set up the database structure on device
-//     uint32_t transactions_count = static_cast<uint32_t>(transaction_start.size());
-
-//     gpuErrchk(cudaMemcpy(&(d_db->transactions_count), &transactions_count, sizeof(uint32_t), cudaMemcpyHostToDevice));
-//     gpuErrchk(cudaMemcpy(&(d_db->transaction_start), &d_transaction_start, sizeof(uint32_t *), cudaMemcpyHostToDevice));
-//     gpuErrchk(cudaMemcpy(&(d_db->transaction_end), &d_transaction_end, sizeof(uint32_t *), cudaMemcpyHostToDevice));
-//     gpuErrchk(cudaMemcpy(&(d_db->item_utility), &d_item_utility, sizeof(key_value *), cudaMemcpyHostToDevice));
-//     gpuErrchk(cudaMemcpy(&(d_db->item_index), &d_item_index, sizeof(key_value *), cudaMemcpyHostToDevice));
-//     gpuErrchk(cudaDeviceSynchronize());
-//     gpuErrchk(cudaPeekAtLastError());
-
-//     return total_gpu_memory;
-// }
-
-// // Function to print GPU memory usage breakdown
-// void print_gpu_memory_usage(const std::vector<uint32_t> &transaction_start,
-//                             const std::vector<uint32_t> &transaction_end,
-//                             const std::vector<key_value> &item_utility,
-//                             size_t total_gpu_memory)
-// {
-//     std::cout << "GPU Memory Usage Breakdown:" << std::endl;
-//     std::cout << "  Database struct: " << sizeof(database) << " bytes" << std::endl;
-//     std::cout << "  Transaction start indices: " << transaction_start.size() * sizeof(uint32_t) << " bytes" << std::endl;
-//     std::cout << "  Transaction end indices: " << transaction_end.size() * sizeof(uint32_t) << " bytes" << std::endl;
-//     std::cout << "  Item utilities: " << item_utility.size() * sizeof(key_value) << " bytes" << std::endl;
-//     std::cout << "  Item index: " << item_utility.size() * bucket_factor * sizeof(key_value) << " bytes" << std::endl;
-//     std::cout << "  Total GPU memory used: " << total_gpu_memory << " bytes" << std::endl;
-// }
 
 // // Function to perform mining on GPU
 // void mine_gpu_patterns(const params &p,

@@ -489,14 +489,14 @@ class GPUEFIM:
 
 if __name__ == "__main__":
 
-    # inputFile = 'EFIM/accidents_utility_spmf.txt'
-    # minUtil = 19000000
+    inputFile = '/home/tarun/cudaEFIM/datasets/accidents_utility_spmf.txt'
+    minUtil = 20000000
 
-    inputFile = '/home/tarun/cudaEFIM/datasets/chainstore.txt'
-    minUtil = 5000000
+    # inputFile = '/home/tarun/cudaEFIM/datasets/chainstore.txt'
+    # minUtil = 5000000
 
-    # inputFile = '/home/tarun/cudaEFIM/datasets/test.txt'
-    # minUtil = 5
+    # inputFile = '/home/tarun/cudaEFIM/datasets/values.txt'
+    # minUtil = 30
 
     # inputFile = "EFIM/BMS_utility_spmf.txt"
     # minUtil = 2030000

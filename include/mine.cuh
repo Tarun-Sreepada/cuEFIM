@@ -3,7 +3,9 @@
 #include "args.cuh"
 #include "memory.cuh"
 #include "build.hpp"
-
+#include <thrust/device_vector.h>
+#include <thrust/reduce.h>
+#include <thrust/scan.h>
 
 struct gpu_db
 {
@@ -38,16 +40,23 @@ struct gpu_db
 struct workload
 {
     CudaMemory<uint32_t> primary;
+    CudaMemory<uint32_t> secondary_reference;
     CudaMemory<uint32_t> secondary;
 
     CudaMemory<uint32_t> primary_utility;
     CudaMemory<uint32_t> subtree_utility;
     CudaMemory<uint32_t> local_utility;
 
+    CudaMemory<uint32_t> number_of_new_candidates_per_candidate;
+    CudaMemory<uint32_t> new_primaries;
+    CudaMemory<uint32_t> new_secondary_reference;
+
     size_t number_of_primaries;
     size_t primary_size;
 
-    size_t number_of_secondaries;    
+    size_t number_of_secondaries;   
+
+    size_t total_number_new_primaries; 
 
 };
 

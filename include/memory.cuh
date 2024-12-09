@@ -45,22 +45,6 @@ public:
         }
     }
 
-    // Copy assignment operator
-    CudaMemory &operator=(const CudaMemory &other)
-    {
-        if (this != &other)
-        {
-            deallocateMemory();
-            size_ = other.size_;
-            if (size_ > 0)
-            {
-                allocateMemory(Config::gpu_memory_allocation::Device);
-                cudaMemcpy(ptr_, other.ptr_, size_ * sizeof(T), cudaMemcpyDeviceToDevice);
-            }
-        }
-        return *this;
-    }
-
     // Move constructor
     CudaMemory(CudaMemory &&other) noexcept
         : size_(other.size_), ptr_(other.ptr_)
@@ -80,6 +64,7 @@ public:
             other.ptr_ = nullptr;
             other.size_ = 0;
         }
+    
         return *this;
     }
 

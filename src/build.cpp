@@ -49,6 +49,7 @@ build_file build_cpu(parsed_file &pf, results &r, Config::Params &p)
         {
             continue;
         }
+
         bf.csr_transaction_start.push_back(bf.total_items);
 
         uint32_t total_value = std::accumulate(temp.begin(), temp.end(), 0,
@@ -61,12 +62,32 @@ build_file build_cpu(parsed_file &pf, results &r, Config::Params &p)
                       return a.key < b.key;
                   });
 
+        uint32_t temp_val = 0;
+        for (size_t i = 0; i < temp.size(); i++)
+        {
+            bf.subtree_utility[temp[i].key] += total_value - temp_val;
+            temp_val += temp[i].value;
+        }
+
         bf.max_transaction_size = std::max(bf.max_transaction_size, temp.size());
         bf.compressed_spare_row_db.insert(bf.compressed_spare_row_db.end(), temp.begin(), temp.end());
         bf.total_items += temp.size();
         bf.csr_transaction_end.push_back(bf.total_items);
         bf.transaction_count++;
     }
+
+    // create primary and secondary
+    for (const auto &item : bf.subtree_utility)
+    {
+        if (item.second >= p.min_utility)
+        {
+            bf.primary.push_back(bf.item_to_itemID[item.first]);
+        }
+    }
+
+    bf.secondary.assign(bf.itemID_to_item.size() + 1, 1);
+
+
     r.record_memory_usage("Build");
 
     return std::move(bf);

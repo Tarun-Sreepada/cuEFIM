@@ -78,6 +78,8 @@ struct results
             std::tuple<
                 std::chrono::time_point<std::chrono::high_resolution_clock>, uint32_t, uint32_t>>> memory_usage;
 
+    std::vector<std::pair<std::vector<uint32_t>, std::vector<uint32_t>>> patterns;
+
     // Function to record RSS and CUDA memory usage with a custom label
     void record_memory_usage(const std::string& label) {
         auto now = std::chrono::high_resolution_clock::now();
