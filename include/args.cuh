@@ -127,7 +127,7 @@ namespace Config
             {
                 p.output_file = argv[++i];
             }
-            else if (arg == "--separator" && i + 1 < argc)
+            else if (arg == "--seperator" && i + 1 < argc)
             {
                 p.separator = argv[++i];
                 if (p.separator == "\\t")
