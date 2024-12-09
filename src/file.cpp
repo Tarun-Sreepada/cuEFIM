@@ -33,10 +33,6 @@ raw_file read_file_cpu(results &r, Config::Params &p)
         std::cerr << "Error: File is empty" << std::endl;
         exit(1);
     }
-    else
-    {
-        std::cout << "File size: " << file_size_bytes << " bytes" << std::endl;
-    }
 
     raw_file rf;
     rf.size_bytes = file_size_bytes;

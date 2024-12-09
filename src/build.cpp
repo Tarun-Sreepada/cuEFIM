@@ -14,34 +14,30 @@ build_file build_cpu(parsed_file &pf, results &r, Config::Params &p)
         bf.ordered_twu[item.first] = item.second;
     }
 
-    // sort twu in descending order
     bf.ordered_twu_vector = std::vector<std::pair<uint32_t, uint32_t>>(bf.ordered_twu.begin(), bf.ordered_twu.end());
     std::sort(bf.ordered_twu_vector.begin(), bf.ordered_twu_vector.end(),
               [](const std::pair<uint32_t, uint32_t> &a, const std::pair<uint32_t, uint32_t> &b) {
-                  return a.second < b.second;
+                  return a.second > b.second;
               });
 
     // create item to itemID mapping start from 1
-    uint32_t itemID = 1;
-    for (const auto &item : bf.ordered_twu)
+    uint32_t itemID = bf.ordered_twu.size();
+    for (const auto &item : bf.ordered_twu_vector)
     {
-        bf.item_to_itemID[item.first] = itemID;
         bf.itemID_to_item[itemID] = item.first;
-        itemID++;
+        bf.item_to_itemID[item.first] = itemID--;
     }
-
-    // create transactions
 
     for (const auto &transaction : pf.key_value_pairs)
     {
-        // take key in transaction, if key in ordered twu then add to transaction
-        // std::vector<std::pair<uint32_t, uint32_t>> temp;
         std::vector<key_value> temp;
+        uint32_t total_value = 0;
         for (size_t i = 0; i < transaction.first.size(); i++)
         {
-            if (bf.ordered_twu.find(transaction.first[i]) != bf.ordered_twu.end())
+            if (bf.item_to_itemID.find(transaction.first[i]) != bf.item_to_itemID.end())
             {
                 temp.push_back({bf.item_to_itemID[transaction.first[i]], transaction.second[i]});
+                total_value += transaction.second[i];
             }
         }
 
@@ -51,11 +47,6 @@ build_file build_cpu(parsed_file &pf, results &r, Config::Params &p)
         }
 
         bf.csr_transaction_start.push_back(bf.total_items);
-
-        uint32_t total_value = std::accumulate(temp.begin(), temp.end(), 0,
-                                               [](uint32_t sum, const key_value &a) {
-                                                   return sum + a.value;
-                                               });
 
         std::sort(temp.begin(), temp.end(),
                   [](const key_value &a, const key_value &b) {
@@ -80,13 +71,12 @@ build_file build_cpu(parsed_file &pf, results &r, Config::Params &p)
     for (const auto &item : bf.subtree_utility)
     {
         if (item.second >= p.min_utility)
-        {
-            bf.primary.push_back(bf.item_to_itemID[item.first]);
+        {   
+            bf.primary.push_back(item.first);
         }
     }
 
     bf.secondary.assign(bf.itemID_to_item.size() + 1, 1);
-
 
     r.record_memory_usage("Build");
 

@@ -339,11 +339,12 @@ class GPUEFIM:
 
             candidateSize = len(collection[0][0]) + 1
             numCandidates = len(candidates)
-            # print("Candidates: ", numCandidates)
+            print("Candidates: ", numCandidates)
 
             # flatten candidates
             candidates = [item for sublist in candidates for item in sublist]
             candidates = cp.array(candidates, dtype=np.uint32)
+            
 
             # print(secondaries)
             secondaries = cp.array(secondaries, dtype=np.uint32)
@@ -489,14 +490,14 @@ class GPUEFIM:
 
 if __name__ == "__main__":
 
-    inputFile = '/home/tarun/cudaEFIM/datasets/accidents_utility_spmf.txt'
-    minUtil = 20000000
+    # inputFile = '/home/tarun/cudaEFIM/datasets/accidents_utility_spmf.txt'
+    # minUtil = 19000000
 
     # inputFile = '/home/tarun/cudaEFIM/datasets/chainstore.txt'
     # minUtil = 5000000
 
-    # inputFile = '/home/tarun/cudaEFIM/datasets/values.txt'
-    # minUtil = 30
+    inputFile = '/home/tarun/cudaEFIM/datasets/values.txt'
+    minUtil = 30
 
     # inputFile = "EFIM/BMS_utility_spmf.txt"
     # minUtil = 2030000
