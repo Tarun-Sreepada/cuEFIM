@@ -86,6 +86,55 @@ struct results
         memory_usage.emplace_back(label, std::make_tuple(now, rss, cuda_mem));
     }
 
+    void print_statistics() const {
+        const int maxWidth = 70;
+        std::string text = " Statistics ";
+        int padding = (maxWidth - text.size()) / 2;
+
+        // Create the left and right padding
+        std::string leftPadding(padding, '-');
+        std::string rightPadding(maxWidth - text.size() - leftPadding.size(), '-');
+
+        // Print the formatted output
+        std::cout << leftPadding << text << rightPadding << std::endl;
+        std::cout << std::setw(15) << "Label"
+                  << std::setw(20) << "Time (s.ms)"
+                  << std::setw(15) << "RSS (MB)"
+                  << std::setw(20) << "CUDA Memory (MB)" << std::endl;
+        std::cout << std::string(maxWidth, '-') << std::endl;
+
+        // Data
+        std::chrono::time_point<std::chrono::high_resolution_clock> start_time;
+
+        for (const auto &[label, data] : memory_usage) {
+            auto [timestamp, rss, cuda_mem] = data;
+
+            // If the label is "Start", record the start time
+            if (label == "Start") {
+                start_time = timestamp;
+                std::cout << std::setw(15) << label
+                          << std::setw(20) << "0.000" // Start time is 0
+                          << std::setw(15) << rss / 1024 / 1024
+                          << std::setw(20) << cuda_mem / 1024 / 1024
+                          << std::endl;
+                continue;
+            }
+
+            // Calculate time difference from the start time
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(timestamp - start_time);
+            double seconds_ms = duration.count() / 1000.0;
+
+            // Print the data
+            std::cout << std::setw(15) << label
+                      << std::setw(20) << std::fixed << std::setprecision(3) << seconds_ms
+                      << std::setw(15) << rss / 1024 / 1024
+                      << std::setw(20) << cuda_mem / 1024 / 1024
+                      << std::endl;
+        }
+    }
+
+    
+
 private:
     // Helper function to retrieve RSS memory usage
     uint32_t get_rss_memory_usage() {
@@ -108,17 +157,4 @@ private:
         return pages * sysconf(_SC_PAGESIZE);
     }
 
-};
-
-
-
-// For CPU Parse
-struct VectorHash {
-    std::size_t operator()(const std::vector<uint32_t>& vec) const {
-        std::size_t seed = vec.size();
-        for (auto& i : vec) {
-            seed ^= i + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-        }
-        return seed;
-    }
 };

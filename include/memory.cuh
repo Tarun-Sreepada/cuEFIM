@@ -17,6 +17,17 @@ public:
         }
     }
 
+    // Constructor that takes a std::vector and allocates memory
+    CudaMemory(const std::vector<T>& vec, Config::gpu_memory_allocation memType = Config::gpu_memory_allocation::Device)
+        : size_(vec.size()), ptr_(nullptr)
+    {
+        if (size_ > 0)
+        {
+            allocateMemory(memType);
+            cudaMemcpy(ptr_, vec.data(), size_ * sizeof(T), cudaMemcpyHostToDevice);
+        }
+    }
+
     // Destructor
     ~CudaMemory()
     {
@@ -87,7 +98,13 @@ public:
         return h_vec;
     }
 
-
+    // Copy data from std::vector to the current CudaMemory instance
+    void copy_from_host(const std::vector<T>& vec)
+    {
+        size_ = vec.size();
+        allocateMemory(Config::gpu_memory_allocation::Device);
+        cudaMemcpy(ptr_, vec.data(), size_ * sizeof(T), cudaMemcpyHostToDevice);
+    }
 
 private:
     size_t size_;

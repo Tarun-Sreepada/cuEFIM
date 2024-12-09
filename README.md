@@ -64,8 +64,7 @@ You can display the program's help menu to see all available options:
 ## **Usage Example**
 
 ```bash
-./cuEFIM -f ../datasets/accidents_utility_spmf.txt -o /dev/stdout -s \\s \
-    -m 150000000 -p 128 -q 32 -M hash_table_shared_memory -P CPU -G Device
+./build/cuEFIM --input-file /home/tarun/cudaEFIM/datasets/values.txt --output-file /dev/stdout --separator \\s --min-utility 30 --page-size 128 --queue-depth 32  --memory Device --method hash_table_shared_memory
 ```
 
 ---

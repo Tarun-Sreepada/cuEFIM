@@ -62,12 +62,6 @@ namespace Config
         hash_table_shared_memory,
     };
 
-    enum class file_read_method
-    {
-        CPU,
-        GPU
-    };
-
     struct Params
     {
         std::string input_file;
@@ -78,10 +72,11 @@ namespace Config
 
         uint32_t min_utility = 0;
 
+        size_t block_size = 32;
+
         size_t page_size = 128 * 1024; // KIBIBYTE assumed to be 1024
         size_t queue_depth = 512;
 
-        file_read_method read_method = file_read_method::CPU;
         gpu_memory_allocation GPU_memory_allocation = gpu_memory_allocation::Device;
         mine_method method = mine_method::hash_table_shared_memory;
 
@@ -113,7 +108,6 @@ namespace Config
                   << "  --min-utility <value>     Minimum utility value (default: 0)\n"
                   << "  --page-size <bytes>       Page size in bytes (default: 128 KiB)\n"
                   << "  --queue-depth <value>     Queue depth (default: 512)\n"
-                  << "  --read-method <CPU|GPU>   File parsing method (default: CPU)\n"
                   << "  --memory <Device|Unified|Pinned> GPU memory allocation (default: Device)\n"
                   << "  --method <name>           Mining method (default: hash_table_shared_memory)\n"
                   << "  --cuda-device-id <id>     CUDA device ID (default: 0)\n";
@@ -160,18 +154,6 @@ namespace Config
             else if (arg == "--queue-depth" && i + 1 < argc)
             {
                 p.queue_depth = std::stoul(argv[++i]);
-            }
-            else if (arg == "--read-method" && i + 1 < argc)
-            {
-                std::string method = argv[++i];
-                if (method == "CPU")
-                {
-                    p.read_method = file_read_method::CPU;
-                }
-                else if (method == "GPU")
-                {
-                    p.read_method = file_read_method::GPU;
-                }
             }
             else if (arg == "--memory" && i + 1 < argc)
             {
@@ -238,7 +220,6 @@ namespace Config
                   << "\tMinimum Utility: " << p.min_utility << "\n"
                   << "\tPage Size: " << p.page_size << "\n"
                   << "\tQueue Depth: " << p.queue_depth << "\n"
-                  << "\tRead Method: " << (p.read_method == file_read_method::CPU ? "CPU" : "GPU") << "\n"
                   << "\tGPU Memory Allocation: "
                   << (p.GPU_memory_allocation == gpu_memory_allocation::Device
                           ? "Device"

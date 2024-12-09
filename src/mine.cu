@@ -13,107 +13,72 @@ __device__ uint32_t hashFunction(uint32_t key, uint32_t tableSize)
     return pcg_hash(key) % tableSize;
 }
 
-// // Device function to query an item in the hash table
-// __device__ int64_t query_item(key_value *item_index, uint32_t start_search, uint32_t end_search, uint32_t item) {
-
-//     uint32_t tableSize = end_search - start_search;
-
-//     uint32_t hashIdx = hashFunction(item, tableSize);
-
-//     while (true) {
-//         if (item_index[hashIdx + start_search].key == 0) {
-//             return -1; // Item not found
-//         }
-//         if (item_index[hashIdx + start_search].key == item) {
-//             return item_index[hashIdx + start_search].value;
-//         }
-//         // Handle collisions (linear probing)
-//         hashIdx = (hashIdx + 1) % tableSize;
-//     }
-// }
-
-
-__global__ void print_database(d_database *d_db)
+template <typename T>
+__global__ void print_array(T* array, uint32_t size)
 {
-    printf("Primary Size: %u\n", d_db->primary_size);
-    printf("Secondary Size: %u\n", d_db->secondary_size);
-    printf("Largest Transaction Size: %u\n", d_db->largest_transaction_size);
+    for (int i = 0; i < size; i++)
+    {
+        printf("%u ", static_cast<uint32_t>(array[i]));  // Use static_cast for non-uint32_t types
+    }
+    printf("\n");
+}
+
+__global__ void print_key_value(key_value *array, uint32_t size)
+{
+    for (int i = 0; i < size; i++)
+    {
+        printf("%u:%u ", array[i].key, array[i].value);
+    }
+    printf("\n");
+}
+
+__global__ void print_db(gpu_db *d_db)
+{
+    printf("Transaction Count: %u\n", d_db->transaction_count);
+    printf("Total Items: %u\n", d_db->total_items);
+    printf("Max Transaction Size: %u\n", d_db->max_transaction_size);
     printf("Load Factor: %u\n", d_db->load_factor);
 
-    printf("Primary: ");
-    for (int i = 0; i < d_db->primary_size; i++)
-    {
-        printf("%ld ", d_db->primary.ptr()[i]);
-    }
-    printf("\n");
-
-    printf("Secondary: ");
-    for (int i = 0; i < d_db->secondary_size; i++)
-    {
-        printf("%ld ", d_db->secondary.ptr()[i]);
-    }
-
-    printf("\n");
-
-    // print transactions
     for (int i = 0; i < d_db->transaction_count; i++)
     {
-        for (int j = d_db->d_csr_transaction_start.ptr()[i]; j < d_db->d_csr_transaction_end.ptr()[i]; j++)
+        for (int j = d_db->csr_transaction_start.ptr()[i]; j < d_db->csr_transaction_end.ptr()[i]; j++)
         {
-            printf("%u:%u ", d_db->d_compressed_spare_row_db.ptr()[j].key, d_db->d_compressed_spare_row_db.ptr()[j].value);
+            printf("%u:%u ", d_db->compressed_spare_row_db.ptr()[j].key, d_db->compressed_spare_row_db.ptr()[j].value);
         }
         printf("\n");
     }
+    printf("\n");
 
-    // print hashed transactions
-    for (int i = 0; i < d_db->transaction_count; i++)
-    {
-        for (int j = d_db->d_csr_transaction_start.ptr()[i] * d_db->load_factor; j < d_db->d_csr_transaction_end.ptr()[i] * d_db->load_factor; j++)
-        {
-            // printf("%u:%u ", d_db->d_compressed_spare_row_db.ptr()[j].key, d_db->d_compressed_spare_row_db.ptr()[j].value);
-            printf("%u:%u ", d_db->d_hashed_csr_db.ptr()[j].key, d_db->d_hashed_csr_db.ptr()[j].value);
-        }
-        printf("\n");
-    }
+
 }
 
 
 // Kernel to insert transactions into the hash table
-__global__ void hash_transactions(d_database *d_db)
+__global__ void hash_transactions(gpu_db *d_db)
 
 {
-
-    printf("Primary Size: %u\n", d_db->primary_size);
-    printf("Secondary Size: %u\n", d_db->secondary_size);
-    printf("Largest Transaction Size: %u\n", d_db->largest_transaction_size);
-    printf("Load Factor: %u\n", d_db->load_factor);
-    printf("Start: %u\tEnd: %u\n", d_db->d_csr_transaction_start.ptr()[0], d_db->d_csr_transaction_end.ptr()[1]);
-
     uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= d_db->transaction_count)
     {
         return;
     }
-    printf("TID: %u\n", tid);
-    printf("Start: %u\tEnd: %u\n", d_db->d_csr_transaction_start.ptr()[tid], d_db->d_csr_transaction_end.ptr()[tid]);
+    uint32_t start = d_db->csr_transaction_start.ptr()[tid];
+    uint32_t end = d_db->csr_transaction_end.ptr()[tid];
+    uint32_t bucket_size = (end - start) * d_db->load_factor;
+    uint32_t item_index_insert_start = start * d_db->load_factor;
 
-    uint32_t bucket_size = (d_db->d_csr_transaction_start.ptr()[tid] - d_db->d_csr_transaction_end.ptr()[tid]) * d_db->load_factor;
-    uint32_t item_index_insert_start = d_db->d_csr_transaction_start.ptr()[tid] * d_db->load_factor;
-    printf("Bucket Size: %u\tLoad Factor: %u\n", bucket_size, d_db->load_factor);
-    printf("Item Index Insert Start: %u\n", item_index_insert_start);
-
-    for (int i = d_db->d_csr_transaction_start.ptr()[tid]; i < d_db->d_csr_transaction_end.ptr()[tid]; i++)
+    for (int i = d_db->csr_transaction_start.ptr()[tid]; i < d_db->csr_transaction_end.ptr()[tid]; i++)
     {
-        uint32_t item = d_db->d_compressed_spare_row_db.ptr()[i].key;
+        uint32_t item = d_db->compressed_spare_row_db.ptr()[i].key;
         uint32_t hashIdx = hashFunction(item, bucket_size);
 
         // d_db->d_hashed_csr_db.ptr()
         while (true)
         {
-            if (d_db->d_hashed_csr_db.ptr()[hashIdx + item_index_insert_start].key == 0)
+            if (d_db->transaction_hash_db.ptr()[hashIdx + item_index_insert_start].key == 0)
             {
-                d_db->d_hashed_csr_db.ptr()[hashIdx + item_index_insert_start].key = item;
-                d_db->d_hashed_csr_db.ptr()[hashIdx + item_index_insert_start].value = i;
+                d_db->transaction_hash_db.ptr()[hashIdx + item_index_insert_start].key = item;
+                d_db->transaction_hash_db.ptr()[hashIdx + item_index_insert_start].value = i;
                 break;
             }
             // Handle collisions (linear probing)
@@ -122,29 +87,181 @@ __global__ void hash_transactions(d_database *d_db)
     }
 }
 
+__global__ void print_hash_transactions(gpu_db *d_db)
 
-void mine(CudaMemory<d_database> &db, results &r, Config::Params &p)
 {
-#ifdef DEBUG
+    for (int i = 0; i < d_db->transaction_count; i++)
+    {
+        for (int j = d_db->csr_transaction_start.ptr()[i] * d_db->load_factor; j < d_db->csr_transaction_end.ptr()[i] * d_db->load_factor; j++)
+        {
+            printf("%u:%u ", d_db->transaction_hash_db.ptr()[j].key, d_db->transaction_hash_db.ptr()[j].value);
+        }
+        printf("\n");
+    }
+        printf("\n");
+}
+
+__device__ int64_t query_item(key_value *item_index, uint32_t start_search, uint32_t end_search, uint32_t item) {
+
+    uint32_t tableSize = end_search - start_search;
+
+    uint32_t hashIdx = hashFunction(item, tableSize);
+
+    while (true) {
+        if (item_index[hashIdx + start_search].key == 0) {
+            return -1; // Item not found
+        }
+        if (item_index[hashIdx + start_search].key == item) {
+            return item_index[hashIdx + start_search].value;
+        }
+        // Handle collisions (linear probing)
+        hashIdx = (hashIdx + 1) % tableSize;
+    }
+}
+
+
+void mine(build_file &bf, results &r, Config::Params &p)
+{
     std::cout << "Mining" << std::endl;
-#endif
 
-    // d_database d_db = db; // just to copy the pointers over to the GPU so we can avoid the CPU-GPU communication
+    gpu_db *d_db;
+    cudaMallocManaged(&d_db, sizeof(gpu_db));
 
-   
+    d_db->transaction_count = bf.transaction_count;
+    d_db->total_items = bf.total_items;
+    d_db->max_transaction_size = bf.max_transaction_size;
+
+    d_db->compressed_spare_row_db = CudaMemory<key_value>(bf.compressed_spare_row_db, p.GPU_memory_allocation);
+    d_db->csr_transaction_start = CudaMemory<size_t>(bf.csr_transaction_start, p.GPU_memory_allocation);
+    d_db->csr_transaction_end = CudaMemory<size_t>(bf.csr_transaction_end, p.GPU_memory_allocation);
+    d_db->transaction_hits = CudaMemory<bool>(bf.transaction_count, p.GPU_memory_allocation);
+    // set transaciton hits all to true
+    cudaMemset(d_db->transaction_hits.ptr(), 1, bf.transaction_count * sizeof(bool));
+    gpuErrchk(cudaPeekAtLastError());
+    gpuErrchk(cudaDeviceSynchronize());
+
+    r.record_memory_usage("GPU DB");
+
     dim3 block(1);
     dim3 grid(1);
 
-    print_database<<<grid, block>>>(d_db);
+    #ifdef DEBUG
+    print_db<<<grid, block>>>(d_db);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
+    #endif
 
 
-    hash_transactions<<<grid, block>>>(d_db);
-    gpuErrchk(cudaPeekAtLastError());
-    gpuErrchk(cudaDeviceSynchronize());
-    r.record_memory_usage("Hashed DB");
+    // if params is hash hash the thing
+    if (p.method == Config::mine_method::hash_table || p.method == Config::mine_method::hash_table_shared_memory)
+    {
+        d_db->load_factor = 2;
+        d_db->transaction_hash_db = CudaMemory<key_value>(d_db->total_items * d_db->load_factor, p.GPU_memory_allocation);
+        gpuErrchk(cudaPeekAtLastError());
+        gpuErrchk(cudaDeviceSynchronize());
+
+        block = dim3(p.block_size);
+        grid = dim3((d_db->transaction_count + block.x - 1) / block.x);
+
+        hash_transactions<<<grid, block>>>(d_db);
+        gpuErrchk(cudaPeekAtLastError());
+        gpuErrchk(cudaDeviceSynchronize());
+        r.record_memory_usage("Hash DB");
+
+        #ifdef DEBUG
+        print_hash_transactions<<<1, 1>>>(d_db);
+        gpuErrchk(cudaPeekAtLastError());
+        gpuErrchk(cudaDeviceSynchronize());
+        #endif
+    }
+
+    workload *w;
+    cudaMallocManaged(&w, sizeof(workload));
+
+    w->primary = CudaMemory<uint32_t>(bf.primary, p.GPU_memory_allocation);
+    w->secondary = CudaMemory<uint32_t>(bf.secondary, p.GPU_memory_allocation);
+    w->number_of_primaries = bf.primary.size();
+    w->primary_size = 1;
+    w->number_of_secondaries = bf.secondary.size();
+
+    grid = dim3(d_db->transaction_count); 
+
+
+    while (w->number_of_primaries)
+    {
+        w->primary_utility = CudaMemory<uint32_t>(w->number_of_primaries, p.GPU_memory_allocation);
+        w->subtree_utility = CudaMemory<uint32_t>(w->number_of_primaries * w->number_of_secondaries, p.GPU_memory_allocation);
+        w->local_utility = CudaMemory<uint32_t>(w->number_of_primaries * w->number_of_secondaries, p.GPU_memory_allocation);
+
+        // Call the search kernel
+        if (p.method == Config::mine_method::no_hash_table)
+        {
+
+        }
+        else if (p.method == Config::mine_method::no_hash_table_shared_memory)
+        {
+
+        }
+        else if (p.method == Config::mine_method::hash_table)
+        {
+
+        }
+        else if (p.method == Config::mine_method::hash_table_shared_memory)
+        {
+
+        }
+
+        w->number_of_primaries = 0;
+    }
+
+
+    // mine_gpu_patterns(p, d_db, bf.primary, bf.secondary, r.frequent_patterns, bf.intToStr, compute_shared_memory_requirement(bf.max_transaction_size));
 }
+
+
+// // Device function to query an item in the hash table
+__device__ int64_t query_item(key_value *item_index, uint32_t start_search, uint32_t end_search, uint32_t item) {
+
+    uint32_t tableSize = end_search - start_search;
+
+    uint32_t hashIdx = hashFunction(item, tableSize);
+
+    while (true) {
+        if (item_index[hashIdx + start_search].key == 0) {
+            return -1; // Item not found
+        }
+        if (item_index[hashIdx + start_search].key == item) {
+            return item_index[hashIdx + start_search].value;
+        }
+        // Handle collisions (linear probing)
+        hashIdx = (hashIdx + 1) % tableSize;
+    }
+}
+
+
+
+// void mine(CudaMemory<d_database> &db, results &r, Config::Params &p)
+// {
+// #ifdef DEBUG
+//     std::cout << "Mining" << std::endl;
+// #endif
+
+//     // d_database d_db = db; // just to copy the pointers over to the GPU so we can avoid the CPU-GPU communication
+
+   
+//     dim3 block(1);
+//     dim3 grid(1);
+
+//     print_database<<<grid, block>>>(d_db);
+//     gpuErrchk(cudaPeekAtLastError());
+//     gpuErrchk(cudaDeviceSynchronize());
+
+
+//     hash_transactions<<<grid, block>>>(d_db);
+//     gpuErrchk(cudaPeekAtLastError());
+//     gpuErrchk(cudaDeviceSynchronize());
+//     r.record_memory_usage("Hashed DB");
+// }
 
 // __global__ void searchGPU_shared_mem_k_v(database *d_db, uint32_t *transaction_hits, uint32_t transactions_count,
 //                                          uint32_t *candidates, uint32_t number_of_candidates, uint32_t candidate_size,
