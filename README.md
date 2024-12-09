@@ -27,7 +27,6 @@ Create a separate directory for the build files to keep the source directory cle
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -- -j$(nproc)
-
 ```
 
 #### For Release Build:
@@ -80,9 +79,8 @@ You can display the program's help menu to see all available options:
 | `--min-utility <value>`  | `-m`      | Minimum utility value.                                      | `0`                 |
 | `--page-size <bytes>`    | `-p`      | Page size in bytes.                                         | `128 KiB`           |
 | `--queue-depth <value>`  | `-q`      | Queue depth for I/O operations.                            | `512`               |
-| `--read-method <method>` | `-P`      | File parsing method: `CPU` or `GPU`.                       | `CPU`               |
 | `--memory <type>`        | `-G`      | GPU memory allocation: `Device`, `Unified`, or `Pinned`.    | `Device`            |
-| `--method <name>`        | `-M`      | Mining method: `hash_table_shared_memory`, `no_hash_table`. | `hash_table_shared_memory` |
+| `--method <name>`        | `-M`      | Mining method: `hash_table_shared_memory`, `no_hash_table_shared_memory`, `hash_table`, `no_hash_table`. | `hash_table_shared_memory` |
 | `--cuda-device-id <id>`  |           | CUDA device ID to use.                                      | `0`                 |
 
 
@@ -125,24 +123,10 @@ You can display the program's help menu to see all available options:
 
 ---
 
-### **6. `convert`**
-- **Role**: Converts CPU-parsed data to GPU-compatible structures.
-- **Responsibilities**:
-  - Prepares data structures for GPU memory (e.g., pinned memory, unified memory).
-
----
-
-### **7. `mine`**
+### **6. `mine`**
 - **Role**: Performs GPU mining operations.
 - **Responsibilities**:
   - Implements mining algorithms on the GPU (e.g., frequent pattern mining).
-
----
-
-### **8. `output`**
-- **Role**: Outputs the mining results.
-- **Responsibilities**:
-  - Formats and writes the results to the specified output file.
 
 ---
 
@@ -156,11 +140,7 @@ You can display the program's help menu to see all available options:
    - `parse` converts the raw file into structured data.
 4. **Database Construction**:
    - `build` organizes the parsed data into a database.
-5. **GPU Preparation**:
-   - `convert` transfers data to GPU-friendly formats.
-6. **Mining**:
+5. **Mining**:
    - `mine` performs GPU mining with the selected method.
-7. **Output**:
-   - `output` writes results to the specified location.
 
 ---

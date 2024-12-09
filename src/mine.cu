@@ -124,6 +124,19 @@ __device__ int binary_search(key_value *item_index, uint32_t start_search, uint3
     uint32_t left = start_search;
     uint32_t right = end_search - 1;
 
+    if (item_index[left].key == item)
+    {
+        return left;
+    }
+    if (item_index[right].key == item)
+    {
+        return right;
+    }
+    if (item_index[left].key > item || item_index[right].key < item)
+    {
+        return -1;
+    }
+
     while (left <= right)
     {
         uint32_t mid = left + (right - left) / 2;
@@ -172,16 +185,16 @@ __global__ void no_hash_table(gpu_db *d_db, workload *w)
             uint32_t candidate = w->primary.ptr()[i * w->primary_size + j];
 
             // // location = binary_search(shared_memory, 0, transaction_length, candidate);
-            // location = binary_search(d_db->compressed_spare_row_db.ptr(), transaction_start, transaction_end, candidate);
+            location = binary_search(d_db->compressed_spare_row_db.ptr(), transaction_start, transaction_end, candidate);
 
-            for (int k = transaction_start; k < transaction_end; k++)
-            {
-                if (d_db->compressed_spare_row_db.ptr()[k].key == candidate)
-                {
-                    location = k;
-                    break;
-                }
-            }
+            // for (int k = transaction_start; k < transaction_end; k++)
+            // {
+            //     if (d_db->compressed_spare_row_db.ptr()[k].key == candidate)
+            //     {
+            //         location = k;
+            //         break;
+            //     }
+            // }
 
             if (location != -1 && d_db->compressed_spare_row_db.ptr()[location].key == candidate)
             {
@@ -266,15 +279,15 @@ __global__ void no_hash_table_shared_mem(gpu_db *d_db, workload *w)
         {
             uint32_t candidate = w->primary.ptr()[i * w->primary_size + j];
 
-            // location = binary_search(shared_memory, 0, transaction_length, candidate);
-            for (int k = 0; k < transaction_length; k++)
-            {
-                if (shared_memory[k].key == candidate)
-                {
-                    location = k;
-                    break;
-                }
-            }
+            location = binary_search(shared_memory, 0, transaction_length, candidate);
+            // for (int k = 0; k < transaction_length; k++)
+            // {
+            //     if (shared_memory[k].key == candidate)
+            //     {
+            //         location = k;
+            //         break;
+            //     }
+            // }
 
             if (location != -1 && shared_memory[location].key == candidate)
             {
