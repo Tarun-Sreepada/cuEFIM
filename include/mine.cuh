@@ -60,5 +60,13 @@ struct workload
 
 };
 
+struct bitset
+{
+    CudaMemory<uint32_t> bitset;
+
+    uint32_t integers_per_item;
+    uint32_t number_of_items;
+};
+
 
 void mine(build_file &bf, results &r, Config::Params &p);

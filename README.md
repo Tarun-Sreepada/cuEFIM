@@ -63,7 +63,7 @@ You can display the program's help menu to see all available options:
 ## **Usage Example**
 
 ```bash
-./build/cuEFIM --input-file /home/tarun/cudaEFIM/datasets/values.txt --output-file /dev/stdout --separator \\s --min-utility 30 --page-size 128 --queue-depth 32  --memory Device --method hash_table_shared_memory
+./build/cuEFIM --input-file /home/tarun/cudaEFIM/datasets/values.txt --output-file /dev/stdout --seperator \\s --min-utility 30 --page-size 128 --queue-depth 32  --memory Device --method hash_table --bitset yes
 ```
 
 ---
@@ -82,7 +82,7 @@ You can display the program's help menu to see all available options:
 | `--memory <type>`        | `-G`      | GPU memory allocation: `Device`, `Unified`, or `Pinned`.    | `Device`            |
 | `--method <name>`        | `-M`      | Mining method: `hash_table_shared_memory`, `no_hash_table_shared_memory`, `hash_table`, `no_hash_table`. | `hash_table_shared_memory` |
 | `--cuda-device-id <id>`  |           | CUDA device ID to use.                                      | `0`                 |
-
+| `--bitset`               |`--bitset` | Use bitset or not                                           | `no`                |S
 
 ---
 

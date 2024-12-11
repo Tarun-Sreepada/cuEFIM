@@ -22,7 +22,6 @@ __global__ void print_array(T *array, uint32_t size)
     }
     printf("\n");
 }
-
 __global__ void print_key_value(key_value *array, uint32_t size)
 {
     for (int i = 0; i < size; i++)
@@ -79,6 +78,23 @@ __global__ void hash_transactions(gpu_db *d_db)
             // Handle collisions (linear probing)
             hashIdx = (hashIdx + 1) % (bucket_size);
         }
+    }
+}
+
+__global__ void create_bitset(gpu_db *d_db, bitset *b)
+{
+    uint32_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= d_db->transaction_count)
+    {
+        return;
+    }
+
+    for (int i = d_db->csr_transaction_start.ptr()[tid]; i < d_db->csr_transaction_end.ptr()[tid]; i++)
+    {
+        uint32_t item = d_db->compressed_spare_row_db.ptr()[i].key;
+        uint32_t bitset_index = (item * b->integers_per_item) + tid / 32;
+        uint32_t bit_index = tid % 32;
+        atomicOr(&b->bitset.ptr()[bitset_index], 1 << (31 - bit_index));
     }
 }
 
@@ -187,15 +203,6 @@ __global__ void no_hash_table(gpu_db *d_db, workload *w)
             // // location = binary_search(shared_memory, 0, transaction_length, candidate);
             location = binary_search(d_db->compressed_spare_row_db.ptr(), transaction_start, transaction_end, candidate);
 
-            // for (int k = transaction_start; k < transaction_end; k++)
-            // {
-            //     if (d_db->compressed_spare_row_db.ptr()[k].key == candidate)
-            //     {
-            //         location = k;
-            //         break;
-            //     }
-            // }
-
             if (location != -1 && d_db->compressed_spare_row_db.ptr()[location].key == candidate)
             {
                 curr_cand_hits++;
@@ -280,14 +287,6 @@ __global__ void no_hash_table_shared_mem(gpu_db *d_db, workload *w)
             uint32_t candidate = w->primary.ptr()[i * w->primary_size + j];
 
             location = binary_search(shared_memory, 0, transaction_length, candidate);
-            // for (int k = 0; k < transaction_length; k++)
-            // {
-            //     if (shared_memory[k].key == candidate)
-            //     {
-            //         location = k;
-            //         break;
-            //     }
-            // }
 
             if (location != -1 && shared_memory[location].key == candidate)
             {
@@ -336,6 +335,260 @@ __global__ void no_hash_table_shared_mem(gpu_db *d_db, workload *w)
             }
         }
     }
+}
+
+__global__ void no_hash_table_bitset(gpu_db *d_db, workload *w, bitset *b)
+{
+    uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid >= w->number_of_primaries)
+    {
+        return;
+    }
+
+    for (int i = 0; i < b->integers_per_item; i++)
+    {
+        unsigned int intersection = 0xFFFFFFFF;
+
+        for (int j = tid * w->primary_size; j < (tid + 1) * w->primary_size; j++)
+        {
+            uint32_t item = w->primary.ptr()[j];
+            uint32_t bitset_index = (item * b->integers_per_item) + i;
+            intersection &= b->bitset.ptr()[bitset_index];
+        }
+
+        // find the location at which the bit is 1
+        int local = 0;
+
+        while (intersection)
+        {
+            int clz = __clz(intersection);
+            local += clz;
+            int current_trans_id = local + i * 32;
+            if (current_trans_id >= d_db->transaction_count)
+            {
+                break;
+            }
+
+            int curr_cand_util = 0;
+            int location = -1;
+
+            int tran_start = d_db->csr_transaction_start.ptr()[current_trans_id];
+            int tran_end = d_db->csr_transaction_end.ptr()[current_trans_id];
+
+            for (int k = 0; k < w->primary_size; k++)
+            {
+                uint32_t candidate = w->primary.ptr()[tid * w->primary_size + k];
+                location = query_item(d_db->compressed_spare_row_db.ptr(), 
+                                        tran_start, tran_end, candidate);
+                curr_cand_util += d_db->compressed_spare_row_db.ptr()[location].value;
+ 
+            }
+
+            w->primary_utility.ptr()[tid] += curr_cand_util;
+
+            // calculate the TWU
+            uint32_t ref = w->secondary_reference.ptr()[tid];
+            uint32_t secondary_index_start = w->number_of_secondaries * ref;
+
+            // collect all utilities
+            for (int j = location + 1; j < tran_end; j++)
+            {
+                uint32_t item = d_db->compressed_spare_row_db.ptr()[j].key;
+                if (w->secondary.ptr()[secondary_index_start + item]) // if the item is valid secondary
+                {
+                    curr_cand_util += d_db->compressed_spare_row_db.ptr()[j].value;
+                }
+            }
+
+            int temp = 0;
+
+            for (int j = location + 1; j < tran_end; j++)
+            {
+                uint32_t item = d_db->compressed_spare_row_db.ptr()[j].key;
+                if (w->secondary.ptr()[secondary_index_start + item]) // if the item is valid secondary
+                {
+                    atomicAdd(&w->local_utility.ptr()[tid * w->number_of_secondaries + item], curr_cand_util);
+                    atomicAdd(&w->subtree_utility.ptr()[tid * w->number_of_secondaries + item], curr_cand_util - temp);
+                    temp += d_db->compressed_spare_row_db.ptr()[j].value;
+                }
+            }
+            intersection <<= clz + 1;
+
+            local++;
+        }
+
+    }
+   
+}
+
+
+__global__ void hash_table_bitset_no_for(gpu_db *d_db, workload *w, bitset *b)
+{
+    uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid >= w->number_of_primaries * b->integers_per_item)
+    {
+        return;
+    }
+
+    int i = tid / w->number_of_primaries;
+    tid = tid % w->number_of_primaries;
+
+    unsigned int intersection = 0xFFFFFFFF;
+
+    for (int j = tid * w->primary_size; j < (tid + 1) * w->primary_size; j++)
+    {
+        uint32_t item = w->primary.ptr()[j];
+        uint32_t bitset_index = (item * b->integers_per_item) + i;
+        intersection &= b->bitset.ptr()[bitset_index];
+    }
+
+    // find the location at which the bit is 1
+    int local = 0;
+
+    while (intersection)
+    {
+        int clz = __clz(intersection);
+        local += clz;
+        int current_trans_id = local + i * 32;
+        if (current_trans_id >= d_db->transaction_count)
+        {
+            break;
+        }
+
+        int curr_cand_util = 0;
+        int location = -1;
+
+        int tran_start = d_db->csr_transaction_start.ptr()[current_trans_id];
+        int tran_end = d_db->csr_transaction_end.ptr()[current_trans_id];
+
+        for (int k = 0; k < w->primary_size; k++)
+        {
+            uint32_t candidate = w->primary.ptr()[tid * w->primary_size + k];
+            location = query_item(d_db->transaction_hash_db.ptr(), 
+                                    tran_start * d_db->load_factor, tran_end * d_db->load_factor, candidate);
+            curr_cand_util += d_db->compressed_spare_row_db.ptr()[location].value;
+
+        }
+
+        w->primary_utility.ptr()[tid] += curr_cand_util;
+
+        // calculate the TWU
+        uint32_t ref = w->secondary_reference.ptr()[tid];
+        uint32_t secondary_index_start = w->number_of_secondaries * ref;
+
+        // collect all utilities
+        for (int j = location + 1; j < tran_end; j++)
+        {
+            uint32_t item = d_db->compressed_spare_row_db.ptr()[j].key;
+            if (w->secondary.ptr()[secondary_index_start + item]) // if the item is valid secondary
+            {
+                curr_cand_util += d_db->compressed_spare_row_db.ptr()[j].value;
+            }
+        }
+
+        int temp = 0;
+
+        for (int j = location + 1; j < tran_end; j++)
+        {
+            uint32_t item = d_db->compressed_spare_row_db.ptr()[j].key;
+            if (w->secondary.ptr()[secondary_index_start + item]) // if the item is valid secondary
+            {
+                atomicAdd(&w->local_utility.ptr()[tid * w->number_of_secondaries + item], curr_cand_util);
+                atomicAdd(&w->subtree_utility.ptr()[tid * w->number_of_secondaries + item], curr_cand_util - temp);
+                temp += d_db->compressed_spare_row_db.ptr()[j].value;
+            }
+        }
+        intersection <<= clz + 1;
+
+        local++;
+    }
+
+   
+}
+
+
+__global__ void hash_table_bitset(gpu_db *d_db, workload *w, bitset *b)
+{
+    uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+    if (tid >= w->number_of_primaries)
+    {
+        return;
+    }
+
+    for (int i = 0; i < b->integers_per_item; i++)
+    {
+        unsigned int intersection = 0xFFFFFFFF;
+
+        for (int j = tid * w->primary_size; j < (tid + 1) * w->primary_size; j++)
+        {
+            uint32_t item = w->primary.ptr()[j];
+            uint32_t bitset_index = (item * b->integers_per_item) + i;
+            intersection &= b->bitset.ptr()[bitset_index];
+        }
+
+        // find the location at which the bit is 1
+        int local = 0;
+
+        while (intersection)
+        {
+            int clz = __clz(intersection);
+            local += clz;
+            int current_trans_id = local + i * 32;
+            if (current_trans_id >= d_db->transaction_count)
+            {
+                break;
+            }
+
+            int curr_cand_util = 0;
+            int location = -1;
+
+            int tran_start = d_db->csr_transaction_start.ptr()[current_trans_id];
+            int tran_end = d_db->csr_transaction_end.ptr()[current_trans_id];
+
+            for (int k = 0; k < w->primary_size; k++)
+            {
+                uint32_t candidate = w->primary.ptr()[tid * w->primary_size + k];
+                location = query_item(d_db->transaction_hash_db.ptr(), 
+                                        tran_start * d_db->load_factor, tran_end * d_db->load_factor, candidate);
+                curr_cand_util += d_db->compressed_spare_row_db.ptr()[location].value;
+ 
+            }
+
+            w->primary_utility.ptr()[tid] += curr_cand_util;
+
+            // calculate the TWU
+            uint32_t ref = w->secondary_reference.ptr()[tid];
+            uint32_t secondary_index_start = w->number_of_secondaries * ref;
+
+            // collect all utilities
+            for (int j = location + 1; j < tran_end; j++)
+            {
+                uint32_t item = d_db->compressed_spare_row_db.ptr()[j].key;
+                if (w->secondary.ptr()[secondary_index_start + item]) // if the item is valid secondary
+                {
+                    curr_cand_util += d_db->compressed_spare_row_db.ptr()[j].value;
+                }
+            }
+
+            int temp = 0;
+
+            for (int j = location + 1; j < tran_end; j++)
+            {
+                uint32_t item = d_db->compressed_spare_row_db.ptr()[j].key;
+                if (w->secondary.ptr()[secondary_index_start + item]) // if the item is valid secondary
+                {
+                    atomicAdd(&w->local_utility.ptr()[tid * w->number_of_secondaries + item], curr_cand_util);
+                    atomicAdd(&w->subtree_utility.ptr()[tid * w->number_of_secondaries + item], curr_cand_util - temp);
+                    temp += d_db->compressed_spare_row_db.ptr()[j].value;
+                }
+            }
+            intersection <<= clz + 1;
+
+            local++;
+        }
+
+    }
+   
 }
 
 __global__ void hash_table(gpu_db *d_db, workload *w)
@@ -498,7 +751,6 @@ __global__ void clean_subtree_local_utility(gpu_db *db, workload *w, uint32_t mi
     if (tid >= primary_count)
         return;
 
-
     for (uint32_t i = tid * w->number_of_secondaries; i < (tid + 1) * w->number_of_secondaries; i++)
     {
         uint32_t item_value = i - tid * w->number_of_secondaries;
@@ -599,6 +851,28 @@ void mine(build_file &bf, results &r, Config::Params &p)
         r.record_memory_usage("Hash DB");
     }
 
+    bitset *b;
+    if (p.bitset == Config::bitset_method::yes)
+    {
+        cudaMallocManaged(&b, sizeof(bitset));
+        // b->integers_per_item = (bf.total_items + 31) / 32; // transactions / 32
+        b->integers_per_item = (bf.transaction_count + 31) / 32; // transactions / 32
+        b->number_of_items = bf.total_items;
+        b->bitset = CudaMemory<uint32_t>(b->integers_per_item * b->number_of_items, p.GPU_memory_allocation);
+        cudaMemset(b->bitset.ptr(), 0, b->integers_per_item * b->number_of_items * sizeof(uint32_t));
+
+        block = dim3(p.block_size);
+        grid = dim3((d_db->transaction_count + block.x - 1) / block.x);
+        create_bitset<<<grid, block>>>(d_db, b);
+        // bitset
+        // create bitset
+        gpuErrchk(cudaPeekAtLastError());
+        gpuErrchk(cudaDeviceSynchronize());
+
+
+        r.record_memory_usage("Bitset");
+    }
+
     workload *w;
     cudaMallocManaged(&w, sizeof(workload));
 
@@ -620,11 +894,11 @@ void mine(build_file &bf, results &r, Config::Params &p)
         shared_memory_required *= d_db->load_factor;
     }
 
-    #ifdef DEBUG
+#ifdef DEBUG
     print_db<<<1, 1>>>(d_db);
     gpuErrchk(cudaPeekAtLastError());
     gpuErrchk(cudaDeviceSynchronize());
-    #endif
+#endif
 
     while (w->number_of_primaries)
     {
@@ -641,26 +915,45 @@ void mine(build_file &bf, results &r, Config::Params &p)
 
         // Call the search kernel
         grid = dim3(d_db->transaction_count);
-        if (p.method == Config::mine_method::no_hash_table)
+        if (p.bitset == Config::bitset_method::no)
         {
-            no_hash_table<<<grid, block>>>(d_db, w);
+            if (p.method == Config::mine_method::no_hash_table)
+            {
+                no_hash_table<<<grid, block>>>(d_db, w);
+            }
+            else if (p.method == Config::mine_method::no_hash_table_shared_memory)
+            {
+                no_hash_table_shared_mem<<<grid, block, shared_memory_required>>>(d_db, w);
+            }
+            else if (p.method == Config::mine_method::hash_table)
+            {
+                hash_table<<<grid, block>>>(d_db, w);
+            }
+            else if (p.method == Config::mine_method::hash_table_shared_memory)
+            {
+                hash_table_shared_mem<<<grid, block, shared_memory_required>>>(d_db, w);
+            }
         }
-        else if (p.method == Config::mine_method::no_hash_table_shared_memory)
+        else
         {
-            no_hash_table_shared_mem<<<grid, block, shared_memory_required>>>(d_db, w);
-        }
-        else if (p.method == Config::mine_method::hash_table)
-        {
-            hash_table<<<grid, block>>>(d_db, w);
-        }
-        else if (p.method == Config::mine_method::hash_table_shared_memory)
-        {
-            hash_table_shared_mem<<<grid, block, shared_memory_required>>>(d_db, w);
+            grid = dim3(w->number_of_primaries + block.x - 1 / block.x);
+            // grid is number of number_of_primaries 
+            if (p.method == Config::mine_method::no_hash_table)
+            {
+                // no_hash_table_bitset<<<grid, block>>>(d_db, w);
+            }
+            else if (p.method == Config::mine_method::hash_table)
+            {
+                hash_table_bitset<<<grid, block>>>(d_db, w, b);
+                // grid = dim3(w->number_of_primaries * b->integers_per_item + block.x - 1 / block.x);
+                // hash_table_bitset_no_for<<<grid, block>>>(d_db, w, b);
+            }
+            else std::cerr << "Bitset only works with no hash table and hash table" << std::endl;
         }
         gpuErrchk(cudaPeekAtLastError());
         gpuErrchk(cudaDeviceSynchronize());
 
-        #ifdef DEBUG
+#ifdef DEBUG
         std::vector<uint32_t> primary = w->primary.get();
         std::vector<uint32_t> primary_utility = w->primary_utility.get();
         std::vector<uint32_t> subtree_utility = w->subtree_utility.get();
@@ -681,7 +974,7 @@ void mine(build_file &bf, results &r, Config::Params &p)
             std::cout << std::endl;
         }
 
-        #endif
+#endif
 
         // push the patterns to the vector
         r.patterns.push_back({w->primary.get(), w->primary_utility.get()});
@@ -696,7 +989,7 @@ void mine(build_file &bf, results &r, Config::Params &p)
         gpuErrchk(cudaPeekAtLastError());
         gpuErrchk(cudaDeviceSynchronize());
 
-        #ifdef DEBUG
+#ifdef DEBUG
         subtree_utility = w->subtree_utility.get();
         local_utility = w->local_utility.get();
 
@@ -715,14 +1008,14 @@ void mine(build_file &bf, results &r, Config::Params &p)
             std::cout << std::endl;
         }
 
-        #endif
+#endif
 
         // wrap using thrust
         thrust::device_ptr<uint32_t> thrust_n_o_n_p_c = thrust::device_pointer_cast(w->number_of_new_candidates_per_candidate.ptr());
         w->total_number_new_primaries = thrust::reduce(thrust_n_o_n_p_c, thrust_n_o_n_p_c + w->number_of_primaries + 1);
-        #ifdef DEBUG
+#ifdef DEBUG
         std::cout << "Total number of new primaries: " << w->total_number_new_primaries << std::endl;
-        #endif
+#endif
 
         r.record_memory_usage("Iter: " + std::to_string(w->primary_size) + "c");
 

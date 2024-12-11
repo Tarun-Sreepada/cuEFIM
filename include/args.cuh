@@ -62,6 +62,12 @@ namespace Config
         hash_table_shared_memory,
     };
 
+    enum class bitset_method
+    {
+        yes, 
+        no
+    };
+
     struct Params
     {
         std::string input_file;
@@ -79,6 +85,7 @@ namespace Config
 
         gpu_memory_allocation GPU_memory_allocation = gpu_memory_allocation::Device;
         mine_method method = mine_method::hash_table_shared_memory;
+        bitset_method bitset = bitset_method::no;
 
         int cuda_device_id = 0; // Default CUDA device ID
         std::string cuda_device_name;
@@ -110,7 +117,8 @@ namespace Config
                   << "  --queue-depth <value>     Queue depth (default: 512)\n"
                   << "  --memory <Device|Unified|Pinned> GPU memory allocation (default: Device)\n"
                   << "  --method <name>           Mining method (default: hash_table_shared_memory)\n"
-                  << "  --cuda-device-id <id>     CUDA device ID (default: 0)\n";
+                  << "  --cuda-device-id <id>     CUDA device ID (default: 0)\n"
+                  << "  --bitset <yes|no>         Use bitset (default: no)\n";
     }
 
     inline Params parse_arguments(int argc, char *argv[])
@@ -195,6 +203,18 @@ namespace Config
             {
                 p.cuda_device_id = std::stoi(argv[++i]);
             }
+            else if (arg == "--bitset" && i + 1 < argc)
+            {
+                std::string bitset = argv[++i];
+                if (bitset == "yes")
+                {
+                    p.bitset = bitset_method::yes;
+                }
+                else if (bitset == "no")
+                {
+                    p.bitset = bitset_method::no;
+                }
+            }
             else if (arg == "--help")
             {
                 print_help(argv[0]);
@@ -235,7 +255,8 @@ namespace Config
                           ? "hash_table"
                           : "hash_table_shared_memory")
                   << "\n"
-                  << "\tCUDA Device ID: " << p.cuda_device_id << ": " << p.cuda_device_name << std::endl;
+                  << "\tCUDA Device ID: " << p.cuda_device_id << ": " << p.cuda_device_name << "\n"
+                    << "\tBitset: " << (p.bitset == bitset_method::yes ? "yes" : "no") << "\n";
     }
 
 } // namespace Config
