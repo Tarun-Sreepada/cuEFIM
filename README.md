@@ -63,7 +63,7 @@ You can display the program's help menu to see all available options:
 ## **Usage Example**
 
 ```bash
-./build/cuEFIM --input-file /home/tarun/cudaEFIM/datasets/values.txt --output-file /dev/stdout --seperator \\s --min-utility 30 --page-size 128 --queue-depth 32  --memory Device --method hash_table --bitset yes
+./build/cuEFIM --input-file /home/tarun/cudaEFIM/datasets/values.txt --output-file /dev/stdout --seperator \\s --min-utility 30 --page-size 128 --queue-depth 32  --memory Device --method hash_table
 ```
 
 ---

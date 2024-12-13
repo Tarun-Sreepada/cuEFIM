@@ -378,7 +378,7 @@ __global__ void no_hash_table_bitset(gpu_db *d_db, workload *w, bitset *b)
             for (int k = 0; k < w->primary_size; k++)
             {
                 uint32_t candidate = w->primary.ptr()[tid * w->primary_size + k];
-                location = query_item(d_db->compressed_spare_row_db.ptr(), 
+                location = binary_search(d_db->compressed_spare_row_db.ptr(), 
                                         tran_start, tran_end, candidate);
                 curr_cand_util += d_db->compressed_spare_row_db.ptr()[location].value;
  
@@ -940,7 +940,7 @@ void mine(build_file &bf, results &r, Config::Params &p)
             // grid is number of number_of_primaries 
             if (p.method == Config::mine_method::no_hash_table)
             {
-                // no_hash_table_bitset<<<grid, block>>>(d_db, w);
+                no_hash_table_bitset<<<grid, block>>>(d_db, w, b);
             }
             else if (p.method == Config::mine_method::hash_table)
             {
