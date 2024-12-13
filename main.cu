@@ -24,33 +24,12 @@ int main(int argc, char *argv[])
     auto bf = build_cpu(pf, r, params);
     mine(bf, r, params);
 
-    // mine
-
-    // write to file
-    // open file
-    // write to file
     std::ofstream output_file(params.output_file);
     if (!output_file.is_open())
     {
         std::cerr << "Error opening output file: " << params.output_file << std::endl;
         exit(1);
     }
-
-    // Collect frequent patterns
-    // uint32_t patternCount = 0;
-    // for (size_t i = 0; i < patterns.size(); ++i)
-    // {
-    //     for (size_t j = 0; j < patterns[i].second.size(); ++j)
-    //     {
-    //         if (patterns[i].second[j] < p.min_utility)
-    //         {
-    //             continue;
-    //         }
-
-    //         patternCount++;
-    //     }
-    // }
-    // std::cout << "Number of patterns: " << patternCount << std::endl;
 
     uint32_t patternCount = 0;
 
